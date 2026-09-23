@@ -9,6 +9,7 @@ import {
   weatherCodeToIcon,
 } from "@/lib/format";
 import { tripDurationDays } from "@/lib/stats";
+import { countryByAlpha2 } from "@/lib/countries";
 import { loadProfile } from "@/lib/profile";
 import type { StepView, TripView } from "@/lib/trip-view";
 import TripView_ from "@/components/TripView";
@@ -50,6 +51,7 @@ export default async function TripPage({ params }: PageProps) {
       title: step.title,
       locationName: step.locationName,
       countryCode: step.countryCode,
+      countryName: countryByAlpha2(step.countryCode)?.name ?? "",
       flag: countryCodeToFlagEmoji(step.countryCode),
       dateLabel: formatDayMonth(step.arrivedAt),
       weatherIcon: weatherCodeToIcon(step.weatherCode),

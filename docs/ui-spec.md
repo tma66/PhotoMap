@@ -55,6 +55,19 @@ forgotten):
 - No `redirects.json` for retired slugs yet.
 - `.gpx` import (to override the ground route with a real recorded track)
   isn't wired up — the route is built from photo/video GPS only.
+- Route decorations missing: small white dots along ground legs, plane icon
+  mid-arc on flights, per-leg transport icons (`RouteLeg.midpoint` is
+  computed in `src/lib/route.ts` for this but unused), red trip-end dot,
+  number badge on multi-photo pins.
+- Hamburger opens the native share sheet only — not a trip-info/stats sheet.
+  No per-step share link (`/m/<slug>#step-n`).
+- `DAY n` tab has no activity icon; carousel cards aren't joined by a
+  dotted line.
+- Story view: no pinch-zoom, no video mute toggle (video is phase 2 anyway).
+- Home: country badge is a circle, not a hexagon; globe doesn't fill visited
+  countries; stat tiles are plain colour, no illustrations; no home-country
+  flag next to the name (`profile.json` has no `homeCountry` field yet).
+- Trip `description` (from `trip.json`) is stored but not shown anywhere.
 
 ## Home page (`/`) — `HomeView.tsx`
 

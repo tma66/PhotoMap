@@ -30,6 +30,7 @@ export interface HomeData {
     continents: string[];
     totalKmLabel: string;
     totalSteps: number;
+    totalDays: number;
     totalTrips: number;
   };
 }

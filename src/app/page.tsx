@@ -25,8 +25,9 @@ export default async function HomePage() {
   ]);
 
   const tripCards: HomeTripCard[] = trips.map((trip) => {
-    const coverStep = trip.steps.find((s) => s.media.length > 0);
-    const coverMedia = coverStep?.media[0];
+    const allMedia = trip.steps.flatMap((s) => s.media);
+    const coverMedia =
+      allMedia.find((m) => m.id === trip.coverMediaId) ?? allMedia[0];
     const days = tripDurationDays(trip.startDate, trip.endDate);
     return {
       slug: trip.slug,
@@ -57,6 +58,10 @@ export default async function HomePage() {
   const continents = continentsVisited(allCountryCodes);
   const totalSteps = trips.reduce((n, t) => n + t.steps.length, 0);
   const totalKm = Math.round(trips.reduce((n, t) => n + t.distanceKm, 0));
+  const totalDays = trips.reduce(
+    (n, t) => n + tripDurationDays(t.startDate, t.endDate),
+    0,
+  );
 
   const data: HomeData = {
     profile: {
@@ -74,6 +79,7 @@ export default async function HomePage() {
       continents,
       totalKmLabel: formatDistance(totalKm),
       totalSteps,
+      totalDays,
       totalTrips: trips.length,
     },
   };

@@ -91,6 +91,9 @@ export default function HomeView({ data }: { data: HomeData }) {
                       run the ingest script to see a trip here.
                     </p>
                   )}
+                  {data.tripCards.length > 0 && (
+                    <p className="font-bold text-base">Past trips</p>
+                  )}
                   {data.tripCards.map((trip) => (
                     <Link
                       key={trip.slug}
@@ -157,10 +160,14 @@ export default function HomeView({ data }: { data: HomeData }) {
                     ))}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3 mt-5 text-sm">
+                  <div className="grid grid-cols-3 gap-3 mt-5 text-sm">
                     <div className="bg-white rounded-xl p-3">
                       <p className="text-ps-muted-2 text-xs">Distance</p>
                       <p className="font-bold">{data.stats.totalKmLabel}</p>
+                    </div>
+                    <div className="bg-white rounded-xl p-3">
+                      <p className="text-ps-muted-2 text-xs">Days</p>
+                      <p className="font-bold">{data.stats.totalDays}</p>
                     </div>
                     <div className="bg-white rounded-xl p-3">
                       <p className="text-ps-muted-2 text-xs">Steps</p>

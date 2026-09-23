@@ -103,7 +103,9 @@ export default function StepCarousel({
                 <img
                   src={cover.thumbUrl}
                   alt=""
-                  className="absolute inset-0 w-full h-full object-cover"
+                  loading="lazy"
+                  className="absolute inset-0 w-full h-full object-cover bg-cover"
+                  style={{ backgroundImage: `url(${cover.placeholder})` }}
                 />
               )}
               <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
@@ -119,7 +121,7 @@ export default function StepCarousel({
                   {step.title}
                 </p>
                 <p className="text-white/85 text-xs mt-0.5">
-                  {step.flag} {step.locationName}
+                  {step.flag} {step.countryName}
                 </p>
               </div>
 

@@ -154,7 +154,8 @@ export default function StepStory({
           <img
             src={media.displayUrl}
             alt=""
-            className="w-full h-full object-contain bg-black"
+            className="w-full h-full object-contain bg-black bg-contain bg-center bg-no-repeat"
+            style={{ backgroundImage: `url(${media.placeholder})` }}
           />
         )}
       </div>
@@ -175,7 +176,7 @@ export default function StepStory({
       <div className="absolute bottom-0 inset-x-0 z-20 safe-bottom px-4 pt-16 bg-gradient-to-t from-black/85 via-black/40 to-transparent">
         <p className="text-white font-bold text-lg">{step.title}</p>
         <p className="text-white/80 text-xs uppercase tracking-wide mt-0.5">
-          {step.flag} {step.countryCode} · {step.dateLabel}
+          {step.flag} {step.countryName || step.countryCode} · {step.dateLabel}
           {step.weatherTempC != null && (
             <>
               {" "}
@@ -201,6 +202,11 @@ export default function StepStory({
               {journalExpanded ? "Show less" : "Show more"}
             </button>
           </div>
+        )}
+        {step.travelGapLabel && (
+          <p className="text-white/60 text-xs mt-2">
+            Traveled for {step.travelGapLabel}
+          </p>
         )}
       </div>
     </div>

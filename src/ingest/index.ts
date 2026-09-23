@@ -16,7 +16,7 @@ process.on("unhandledRejection", (reason) => {
 
 import "./env"; // must stay the first import — see env.ts
 import { readdir, stat, readFile } from "node:fs/promises";
-import { join, extname, relative } from "node:path";
+import { basename, join, extname, relative } from "node:path";
 import chokidar from "chokidar";
 import { prisma } from "../lib/db";
 import { downsample } from "../lib/geo";
@@ -179,8 +179,10 @@ async function ingestTrip(slug: string): Promise<void> {
     });
   }
 
-  const startDate = stepInputs[0]!.arrivedAt;
-  const endDate = stepInputs.at(-1)!.arrivedAt;
+  // Span of the photos themselves, not of step arrivals — the last step can
+  // last several days after you arrive.
+  const startDate = media[0]!.takenAt;
+  const endDate = media.at(-1)!.takenAt;
   const distanceKm = tripDistanceKm(stepInputs);
   const countryCodes = uniqueCountryCodes(stepInputs);
 
@@ -235,7 +237,7 @@ async function ingestTrip(slug: string): Promise<void> {
           m.sourcePath,
           join(CACHE_DIR, slug),
         );
-        await prisma.media.create({
+        const created = await prisma.media.create({
           data: {
             stepId: createdStep.id,
             type: "IMAGE",
@@ -250,6 +252,13 @@ async function ingestTrip(slug: string): Promise<void> {
             order: mediaOrder++,
           },
         });
+        // trip.json "cover": a filename in the trip folder, e.g. "IMG_0042.HEIC".
+        if (overrides.cover && basename(m.sourcePath) === overrides.cover) {
+          await prisma.trip.update({
+            where: { id: trip.id },
+            data: { coverMediaId: created.id },
+          });
+        }
       } catch (err) {
         console.warn(
           `[ingest] ${slug}: failed to process ${m.sourcePath}:`,

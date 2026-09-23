@@ -18,6 +18,7 @@ export interface StepView {
   title: string;
   locationName: string;
   countryCode: string;
+  countryName: string;
   flag: string;
   dateLabel: string;
   weatherIcon: string;
