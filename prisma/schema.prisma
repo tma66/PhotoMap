@@ -1,0 +1,86 @@
+// Travel Steps — content database.
+// This is a REBUILDABLE CACHE derived from photos in assets/. Never hand-edit;
+// run `npm run ingest -- --rebuild` to regenerate from scratch.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Trip {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  title         String
+  description   String   @default("")
+  coverMediaId  String?
+  startDate     DateTime
+  endDate       DateTime
+  distanceKm    Float    @default(0)
+  countryCodes  String   @default("[]") // JSON array of ISO country codes, e.g. ["FR","CH"]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  steps       Step[]
+  trackPoints TrackPoint[]
+
+  @@index([slug])
+}
+
+model Step {
+  id            String   @id @default(cuid())
+  tripId        String
+  order         Int
+  title         String
+  locationName  String
+  countryCode   String
+  lat           Float
+  lng           Float
+  arrivedAt     DateTime
+  journalText   String   @default("")
+  transportMode String   @default("FOOT") // FLIGHT|TRAIN|CAR|BUS|BOAT|FOOT|BIKE|VAN
+  weatherTempC  Float?
+  weatherCode   Int?
+
+  trip  Trip    @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  media Media[]
+
+  @@index([tripId, order])
+}
+
+model Media {
+  id          String   @id @default(cuid())
+  stepId      String
+  type        String   @default("IMAGE") // IMAGE|VIDEO
+  sourcePath  String   // relative path under assets/, never served directly
+  hash        String   @unique // content hash, used as cache filename
+  width       Int
+  height      Int
+  durationSec Float?
+  takenAt     DateTime
+  lat         Float?
+  lng         Float?
+  placeholder String   @default("") // tiny base64 LQIP
+  order       Int      @default(0)
+
+  step Step @relation(fields: [stepId], references: [id], onDelete: Cascade)
+
+  @@index([stepId, order])
+}
+
+// Dense point trail for drawing the real travelled path (from photo/video GPS
+// and optional .gpx imports), simplified before being sent to the client.
+model TrackPoint {
+  id     String   @id @default(cuid())
+  tripId String
+  t      DateTime
+  lat    Float
+  lng    Float
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tripId, t])
+}

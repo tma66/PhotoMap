@@ -1,0 +1,13 @@
+.env
+.env.local
+node_modules/
+dist/
+.next/
+data/
+assets/*
+!assets/example/
+npm-debug.log*
+.DS_Store
+prisma/generated/
+public/maplibre/
+.claude/settings.local.json

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.travelsteps.ingest</string>
+
+  <!-- EDIT this path to wherever you cloned the repo -->
+  <key>WorkingDirectory</key>
+  <string>/Users/YOUR_USERNAME/workspace/travel-steps</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>npm</string>
+    <string>run</string>
+    <string>ingest</string>
+    <string>--</string>
+    <string>--watch</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/travelsteps-ingest.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/travelsteps-ingest.error.log</string>
+</dict>
+</plist>

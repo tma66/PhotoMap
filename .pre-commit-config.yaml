@@ -1,0 +1,31 @@
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # Not trailing-whitespace/end-of-file-fixer: they rewrite files with
+      # rules that don't quite match Prettier's, so the two fight each other
+      # on every commit. Prettier already normalizes whitespace/newlines for
+      # every file type it covers.
+      - id: check-added-large-files
+        args: ["--maxkb=2000"]
+      - id: check-merge-conflict
+
+  # Deterministic formatting/lint checks — run via the project's own
+  # toolchain (package.json) rather than a separate pinned mirror repo.
+  - repo: local
+    hooks:
+      - id: prettier
+        name: prettier
+        entry: npx prettier --check .
+        language: system
+        pass_filenames: false
+      - id: eslint
+        name: eslint
+        entry: npx eslint .
+        language: system
+        pass_filenames: false

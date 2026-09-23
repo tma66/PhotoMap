@@ -1,0 +1,111 @@
+@import "tailwindcss";
+
+/*
+ * Palette captured live from polarsteps.com (see docs/ui-spec.md) — this is
+ * our own token file, not a copy of any Polarsteps asset.
+ */
+@theme {
+  --color-ps-navy: #00293d;
+  --color-ps-navy-text: #002e3d;
+  --color-ps-muted: #4d5a6e;
+  --color-ps-muted-2: #69788c;
+  --color-ps-border: #b8c1cc;
+  --color-ps-bg: #f6f5f2;
+  --color-ps-card: #ffffff;
+  --color-ps-link: #0099e5;
+  --color-ps-accent: #de2b52;
+  --color-ps-header-text: #e7eaee;
+
+  --font-sans: Montserrat, "Helvetica Neue", Arial, Helvetica, sans-serif;
+  --font-serif: "Noto Serif", Georgia, serif;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  background: var(--color-ps-bg);
+  color: var(--color-ps-navy-text);
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+/* Mobile-only: cap width and center on wider viewports instead of a desktop layout. */
+#app-shell {
+  max-width: 480px;
+  margin-inline: auto;
+  min-height: 100dvh;
+  position: relative;
+  background: var(--color-ps-bg);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+
+@supports (padding: max(0px)) {
+  .safe-top {
+    padding-top: max(0.75rem, env(safe-area-inset-top));
+  }
+  .safe-bottom {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Map pins (see components/TripMap.tsx, GlobeMap.tsx) */
+.trip-pin {
+  width: 44px;
+  height: 44px;
+  border-radius: 9999px;
+  border: 3px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    box-shadow 0.2s,
+    transform 0.2s;
+  background: var(--color-ps-navy);
+}
+.trip-pin img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.trip-pin-fallback {
+  width: 100%;
+  height: 100%;
+  background: var(--color-ps-navy);
+}
+.trip-pin-active {
+  box-shadow:
+    0 0 0 4px rgba(222, 43, 82, 0.55),
+    0 1px 6px rgba(0, 0, 0, 0.5);
+  transform: scale(1.12);
+  z-index: 10;
+}
+
+.globe-pin {
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  border: 2px solid #fff;
+  overflow: hidden;
+  background: var(--color-ps-navy);
+}
+.globe-pin img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.maplibregl-ctrl-attrib {
+  font-size: 10px !important;
+}

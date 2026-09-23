@@ -1,0 +1,51 @@
+{
+  "name": "travel-steps",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "ingest": "tsx src/ingest/index.ts",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "prebuild": "node ./scripts/copy-maplibre-worker.mjs",
+    "predev": "node ./scripts/copy-maplibre-worker.mjs"
+  },
+  "dependencies": {
+    "@geo-maps/countries-land-10km": "0.6.0",
+    "@prisma/client": "6.19.3",
+    "@turf/turf": "7.4.0",
+    "all-the-cities": "3.1.0",
+    "chokidar": "5.0.0",
+    "exifr": "7.1.3",
+    "maplibre-gl": "6.11.0",
+    "next": "16.3.6",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "sharp": "0.35.4",
+    "vaul": "1.1.2",
+    "world-countries": "5.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "24.9.2",
+    "@types/react": "19.2.5",
+    "@types/react-dom": "19.2.4",
+    "autoprefixer": "10.4.21",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.6",
+    "eslint-config-prettier": "10.1.8",
+    "piexifjs": "1.0.6",
+    "postcss": "8.5.28",
+    "prettier": "3.7.4",
+    "prisma": "6.19.3",
+    "tailwindcss": "4.3.3",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}
