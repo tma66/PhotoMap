@@ -1,4 +1,4 @@
-# Travel Steps
+# PhotoMap
 
 A self-hosted, read-only travel journal generated automatically from your own
 photos and videos — no login, no cloud, no editor UI. Point it at a folder of
@@ -31,12 +31,12 @@ photos, because why not.
 ## Quickstart
 
 ```
-git clone git@github.com:tma66/travel-steps.git
-cd travel-steps
+git clone git@github.com:tma66/PhotoMap.git
+cd PhotoMap
 npm install
 cp .env.example .env
 npx prisma generate
-npx prisma db push      # creates prisma/data/travel-steps.db
+npx prisma db push      # creates prisma/data/photomap.db
 ```
 
 Add your first trip (see below), then:
@@ -115,13 +115,13 @@ Run the production build as a long-lived process:
 npm run build && npm start
 ```
 
-**Keep it running across reboots/crashes:** copy `scripts/com.travelsteps.web.plist`
-and `scripts/com.travelsteps.ingest.plist` into `~/Library/LaunchAgents/`,
+**Keep it running across reboots/crashes:** copy `scripts/com.photomap.web.plist`
+and `scripts/com.photomap.ingest.plist` into `~/Library/LaunchAgents/`,
 edit the `WorkingDirectory` path in each to where you cloned the repo, then:
 
 ```
-launchctl load ~/Library/LaunchAgents/com.travelsteps.web.plist
-launchctl load ~/Library/LaunchAgents/com.travelsteps.ingest.plist
+launchctl load ~/Library/LaunchAgents/com.photomap.web.plist
+launchctl load ~/Library/LaunchAgents/com.photomap.ingest.plist
 ```
 
 Also turn off display-sleep for this Mac (System Settings → Lock Screen), or
@@ -167,4 +167,5 @@ back up this Mac. The SQLite DB (`prisma/data/`) and resized-photo cache
 
 ## License
 
-[MIT](LICENSE)
+[AGPL-3.0](LICENSE) — if you run a modified version of this as a public
+service, you must also offer its users the modified source code.

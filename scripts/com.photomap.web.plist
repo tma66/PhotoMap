@@ -3,20 +3,17 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.travelsteps.ingest</string>
+  <string>com.photomap.web</string>
 
   <!-- EDIT this path to wherever you cloned the repo -->
   <key>WorkingDirectory</key>
-  <string>/Users/YOUR_USERNAME/workspace/travel-steps</string>
+  <string>/Users/YOUR_USERNAME/workspace/photomap</string>
 
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/env</string>
     <string>npm</string>
-    <string>run</string>
-    <string>ingest</string>
-    <string>--</string>
-    <string>--watch</string>
+    <string>start</string>
   </array>
 
   <key>RunAtLoad</key>
@@ -25,8 +22,8 @@
   <true/>
 
   <key>StandardOutPath</key>
-  <string>/tmp/travelsteps-ingest.log</string>
+  <string>/tmp/photomap-web.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/travelsteps-ingest.error.log</string>
+  <string>/tmp/photomap-web.error.log</string>
 </dict>
 </plist>

@@ -1,4 +1,4 @@
-// Travel Steps — content database.
+// PhotoMap — content database.
 // This is a REBUILDABLE CACHE derived from photos in assets/. Never hand-edit;
 // run `npm run ingest -- --rebuild` to regenerate from scratch.
 

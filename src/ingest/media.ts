@@ -45,7 +45,7 @@ function hashFile(buf: Buffer): string {
  * macOS, or `sips` missing -> caller should skip the file and log a warning.
  */
 async function heicToJpegBuffer(absPath: string): Promise<Buffer> {
-  const dir = await mkdtemp(join(tmpdir(), "travel-steps-heic-"));
+  const dir = await mkdtemp(join(tmpdir(), "photomap-heic-"));
   const outPath = join(dir, "out.jpg");
   try {
     await execFileAsync("sips", [
