@@ -1,28 +1,40 @@
-// Groups a trip's timestamped, geotagged photos/videos into Polarsteps-style
-// "steps" — a new step whenever the photos jump far enough, or enough time
-// has passed at a materially different spot.
+// Groups a trip's timestamped, geotagged photos/videos into "steps" — one
+// step per calendar day (so a multi-day stay at one resort is still a
+// "Day 1"/"Day 2"/"Day 3" progression), plus an extra split whenever the
+// photos jump far enough within the same day (e.g. a same-day flight).
 import { haversineKm, type LatLng } from "../lib/geo";
+import { dayNumber } from "../lib/stats";
 
-export const NEW_STEP_DISTANCE_KM = 25; // always a new step past this, regardless of timing
-export const NEW_STEP_SAME_PLACE_KM = 2; // below this, never split just for a day gap
-export const NEW_STEP_MIN_HOURS = 20; // "new day" threshold, only applies between SAME_PLACE and DISTANCE_KM
-export const FLIGHT_MIN_KM = 300;
-export const FLIGHT_MIN_KMH = 150;
+const NEW_STEP_DISTANCE_KM = 25; // always a new step past this, regardless of timing
+const FLIGHT_MIN_KM = 300;
+// Implied speed is measured photo-to-photo (last shot before departing to
+// first shot after arriving), which always includes some real but
+// unphotographed time — checkout, the airport, immigration, the ride to the
+// hotel — that a cruising-speed threshold doesn't account for. 100km/h
+// leaves comfortable margin below that on a long-haul flight (a 3,000km+
+// trip still reads as "fast" even with a full day of slack on either end)
+// while staying safely above a realistic full-day overland average (driving
+// or a train, including stops) on a route where that's actually possible.
+const FLIGHT_MIN_KMH = 100;
 
 export interface TaggedMedia {
   /** Absolute path on disk, used only during ingestion — never sent to the client. */
   sourcePath: string;
-  type: "IMAGE" | "VIDEO";
+  /** Decided once from the file extension when the trip is scanned — every
+   * later stage (metadata reader, derivative processor, DB row type) reads
+   * this instead of re-testing the extension itself. */
+  kind: "photo" | "video";
   takenAt: Date;
+  /** True when `takenAt` is a real absolute instant (file mtime, no EXIF
+   * date available) rather than a naive local wall-clock value encoded as
+   * if it were UTC (the normal EXIF case) — see src/ingest/timezone.ts. */
+  takenAtIsExact?: boolean;
   lat?: number;
   lng?: number;
   caption?: string;
-  width: number;
-  height: number;
-  durationSec?: number;
 }
 
-export interface DraftStep {
+interface DraftStep {
   centroid: LatLng;
   arrivedAt: Date;
   media: TaggedMedia[];
@@ -30,8 +42,10 @@ export interface DraftStep {
 }
 
 /**
- * `media` must be sorted by `takenAt` ascending. Items without GPS are
- * attached to whichever step is nearest in time.
+ * `media` must be sorted by `takenAt` ascending. Items without GPS attach to
+ * whichever real (GPS-anchored) step is nearest in time, as long as it's the
+ * same day — otherwise there's nowhere sensible to place them, so they're
+ * dropped (e.g. a photo with no GPS on a day with no other geotagged photo).
  */
 export function groupIntoSteps(media: TaggedMedia[]): DraftStep[] {
   const located = media.filter(
@@ -39,6 +53,11 @@ export function groupIntoSteps(media: TaggedMedia[]): DraftStep[] {
       m.lat != null && m.lng != null,
   );
   const unlocated = media.filter((m) => m.lat == null || m.lng == null);
+  // Anchor for "day since trip start" — same reference point used
+  // everywhere else a day number is computed (trip.startDate === this).
+  const firstTakenAt = media[0]?.takenAt;
+  const sameDay = (a: Date, b: Date) =>
+    dayNumber(a, firstTakenAt!) === dayNumber(b, firstTakenAt!);
 
   const steps: DraftStep[] = [];
 
@@ -50,8 +69,7 @@ export function groupIntoSteps(media: TaggedMedia[]): DraftStep[] {
     const shouldStartNew =
       !last ||
       distFromLast > NEW_STEP_DISTANCE_KM ||
-      (distFromLast > NEW_STEP_SAME_PLACE_KM &&
-        hoursBetween(last.arrivedAt, m.takenAt) > NEW_STEP_MIN_HOURS);
+      !sameDay(last.arrivedAt, m.takenAt);
 
     if (shouldStartNew) {
       steps.push({
@@ -63,24 +81,20 @@ export function groupIntoSteps(media: TaggedMedia[]): DraftStep[] {
     } else {
       last.media.push(m);
       if (m.caption) last.captions.push(m.caption);
-      // Recompute centroid as a running average so a long stay drifts
-      // toward its true center rather than staying pinned to the first shot.
-      const n = last.media.length;
-      last.centroid = {
-        lat: last.centroid.lat + (point.lat - last.centroid.lat) / n,
-        lng: last.centroid.lng + (point.lng - last.centroid.lng) / n,
-      };
+      // centroid intentionally stays at the step's first photo's coordinate
+      // (its preview/cover image in the carousel) rather than drifting to an
+      // average — the pin should always match what the cover photo shows.
     }
   }
 
-  // Attach GPS-less media (e.g. a screenshot, or a photo EXIF stripped by
-  // messaging apps) to the nearest-in-time step.
   for (const m of unlocated) {
-    const step = nearestStepInTime(steps, m.takenAt);
-    if (step) {
-      step.media.push(m);
-      if (m.caption) step.captions.push(m.caption);
-    }
+    const nearestReal = nearestStepInTime(steps, m.takenAt);
+    const nearCloseEnough =
+      nearestReal && sameDay(nearestReal.arrivedAt, m.takenAt);
+    if (!nearCloseEnough) continue; // nowhere sensible to put it
+
+    nearestReal.media.push(m);
+    if (m.caption) nearestReal.captions.push(m.caption);
   }
 
   for (const step of steps) {
@@ -107,15 +121,10 @@ function nearestStepInTime(steps: DraftStep[], t: Date): DraftStep | undefined {
   return best;
 }
 
-export type TransportMode =
-  | "FLIGHT"
-  | "TRAIN"
-  | "CAR"
-  | "BUS"
-  | "BOAT"
-  | "FOOT"
-  | "BIKE"
-  | "VAN";
+// Only FLIGHT, FOOT and CAR are ever inferred (see inferTransportMode) — the
+// UI only distinguishes FLIGHT from everything else (src/lib/route.ts), so
+// there's no ground-transport subtype to add here yet.
+type TransportMode = "FLIGHT" | "FOOT" | "CAR";
 
 /**
  * Guess how someone got from one step to the next, from distance and

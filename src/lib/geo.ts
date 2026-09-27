@@ -66,8 +66,23 @@ export function greatCircleArc(a: LatLng, b: LatLng, steps = 64): LatLng[] {
       A * Math.cos(lat1) * Math.sin(lng1) + B * Math.cos(lat2) * Math.sin(lng2);
     const z = A * Math.sin(lat1) + B * Math.sin(lat2);
     const lat = Math.atan2(z, Math.sqrt(x * x + y * y));
-    const lng = Math.atan2(y, x);
-    points.push({ lat: (lat * 180) / Math.PI, lng: (lng * 180) / Math.PI });
+    let lng = Math.atan2(y, x) * (180 / Math.PI);
+
+    // atan2 wraps longitude to (-180, 180], so a path that actually crosses
+    // the antimeridian (e.g. California -> Singapore, whose shortest route
+    // runs west across the Pacific) jumps discontinuously between two
+    // consecutive points (e.g. +179.9 to -179.9). A flat map doesn't know to
+    // bridge that gap and instead draws a straight line across the entire
+    // visible world. Unwrap relative to the previous point so the sequence
+    // stays continuous — MapLibre's default renderWorldCopies then draws it
+    // crossing into the adjacent world copy instead of snapping back.
+    const prevLng = points.at(-1)?.lng;
+    if (prevLng != null) {
+      while (lng - prevLng > 180) lng -= 360;
+      while (lng - prevLng < -180) lng += 360;
+    }
+
+    points.push({ lat: (lat * 180) / Math.PI, lng });
   }
   return points;
 }

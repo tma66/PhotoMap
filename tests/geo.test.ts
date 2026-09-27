@@ -67,6 +67,27 @@ describe("greatCircleArc", () => {
       arc.every((pt) => Number.isFinite(pt.lat) && Number.isFinite(pt.lng)),
     ).toBe(true);
   });
+
+  it("keeps longitude continuous across the antimeridian instead of jumping", () => {
+    // Real regression: Millbrae, CA -> Singapore. The shortest great-circle
+    // route runs west across the Pacific and crosses the antimeridian —
+    // atan2's principal-value output used to jump from ~+179 to ~-179
+    // between two consecutive points, which a flat (non-globe) map rendered
+    // as a straight dashed line across the entire visible world.
+    const millbrae = { lat: 37.6, lng: -122.39 };
+    const singapore = { lat: 1.3, lng: 103.9 };
+    const arc = greatCircleArc(millbrae, singapore, 48);
+    for (let i = 1; i < arc.length; i++) {
+      expect(Math.abs(arc[i]!.lng - arc[i - 1]!.lng)).toBeLessThan(20);
+    }
+    // Still the same physical endpoint, even if unwrapped past ±180.
+    const last = arc.at(-1)!;
+    expect(last.lat).toBeCloseTo(singapore.lat, 5);
+    expect(((last.lng % 360) + 360) % 360).toBeCloseTo(
+      ((singapore.lng % 360) + 360) % 360,
+      5,
+    );
+  });
 });
 
 describe("downsample", () => {

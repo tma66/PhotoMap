@@ -10,4 +10,9 @@ npm-debug.log*
 .DS_Store
 prisma/generated/
 public/maplibre/
-.claude/settings.local.json
+public/pika-profile.png
+.claude/
+tsconfig.tsbuildinfo
+docs/
+design-reference/
+CLAUDE.md

@@ -1,138 +1,285 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import type { StepView } from "@/lib/trip-view";
+
+export interface StepCarouselHandle {
+  /** The on-screen rect of a step's card, or null if it's not currently
+   * rendered — used to animate the story view open/closed from/to the
+   * card's position (see TripView.tsx). */
+  getCardRect: (stepId: string) => DOMRect | null;
+}
+
+/** scrollLeft that puts `card` centered in `container`'s viewport. */
+function centeredScrollLeft(container: HTMLElement, card: HTMLElement): number {
+  return card.offsetLeft - (container.clientWidth - card.clientWidth) / 2;
+}
 
 interface StepCarouselProps {
   steps: StepView[];
+  flags: string[];
+  startDateLabel: string;
+  endDateLabel: string;
   activeIndex: number;
+  isScrubbing?: boolean;
   onActiveChange: (index: number) => void;
+  onScrollProgress: (progress: number) => void;
   onOpenStep: (index: number) => void;
 }
 
-export default function StepCarousel({
-  steps,
-  activeIndex,
-  onActiveChange,
-  onOpenStep,
-}: StepCarouselProps) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const cardRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const suppressScrollReport = useRef(false);
+const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
+  function StepCarousel(
+    {
+      steps,
+      flags,
+      startDateLabel,
+      endDateLabel,
+      activeIndex,
+      isScrubbing = false,
+      onActiveChange,
+      onScrollProgress,
+      onOpenStep,
+    },
+    ref,
+  ) {
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const cardRefs = useRef<(HTMLButtonElement | null)[]>([]);
+    const suppressScrollReport = useRef(false);
+    const suppressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // True for one effect run right after the carousel's own scroll handler
+    // (below) changed activeIndex — as opposed to an external trigger (map pin,
+    // day scrubber, story nav). Skipping the recenter in that case matters:
+    // while the visitor is still actively dragging, scrollLeft isn't at the
+    // settled target yet, and calling scrollTo here would fight the live
+    // touch/scroll gesture (the classic "jerks back and forth" stutter).
+    // CSS scroll-snap already settles the container on its own once they let go.
+    const scrollOriginatedIndexChange = useRef(false);
 
-  // Snap to the active card when it changed for a reason OTHER than the
-  // visitor's own scroll (e.g. tapping a map pin).
-  useEffect(() => {
-    const card = cardRefs.current[activeIndex];
-    const container = scrollRef.current;
-    if (!card || !container) return;
+    useImperativeHandle(
+      ref,
+      () => ({
+        getCardRect: (stepId: string) => {
+          const i = steps.findIndex((s) => s.id === stepId);
+          const card = i >= 0 ? cardRefs.current[i] : null;
+          return card ? card.getBoundingClientRect() : null;
+        },
+      }),
+      [steps],
+    );
 
-    const targetLeft =
-      card.offsetLeft - (container.clientWidth - card.clientWidth) / 2;
-    if (Math.abs(container.scrollLeft - targetLeft) > 4) {
-      suppressScrollReport.current = true;
-      container.scrollTo({ left: targetLeft, behavior: "smooth" });
-      window.setTimeout(() => (suppressScrollReport.current = false), 500);
-    }
-  }, [activeIndex]);
+    // Snap to the active card when it changed for a reason OTHER than the
+    // visitor's own scroll (e.g. tapping a map pin, dragging the day scrubber).
+    useEffect(() => {
+      if (scrollOriginatedIndexChange.current) {
+        scrollOriginatedIndexChange.current = false;
+        return;
+      }
+      const card = cardRefs.current[activeIndex];
+      const container = scrollRef.current;
+      if (!card || !container) return;
 
-  useEffect(() => {
-    const container = scrollRef.current;
-    if (!container) return;
-    let raf = 0;
+      const targetLeft = centeredScrollLeft(container, card);
+      if (Math.abs(container.scrollLeft - targetLeft) > 4) {
+        suppressScrollReport.current = true;
+        container.scrollTo({
+          left: targetLeft,
+          behavior: isScrubbing ? "auto" : "smooth",
+        });
+        if (suppressTimerRef.current != null) {
+          clearTimeout(suppressTimerRef.current);
+        }
+        suppressTimerRef.current = setTimeout(() => {
+          suppressScrollReport.current = false;
+          suppressTimerRef.current = null;
+        }, 500);
+      }
+    }, [activeIndex, isScrubbing]);
 
-    const onScroll = () => {
-      if (suppressScrollReport.current) return;
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        const center = container.scrollLeft + container.clientWidth / 2;
-        let best = 0;
-        let bestDist = Infinity;
-        cardRefs.current.forEach((card, i) => {
-          if (!card) return;
-          const cardCenter = card.offsetLeft + card.clientWidth / 2;
-          const dist = Math.abs(cardCenter - center);
-          if (dist < bestDist) {
-            bestDist = dist;
-            best = i;
+    useEffect(() => {
+      const container = scrollRef.current;
+      if (!container) return;
+      let raf = 0;
+
+      const onScroll = () => {
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(() => {
+          // Continuous position between the first and last real step, so the
+          // day scrubber's fill bar slides in step with the scroll instead of
+          // jumping only when the nearest card changes. Reported regardless of
+          // the suppress/isScrubbing gates below (which only guard against
+          // active-index feedback loops) so it also tracks a programmatic
+          // recenter, e.g. after tapping a map pin.
+          const first = cardRefs.current[0];
+          const last = cardRefs.current[cardRefs.current.length - 1];
+          if (first && last) {
+            const firstTarget = centeredScrollLeft(container, first);
+            const lastTarget = centeredScrollLeft(container, last);
+            const span = lastTarget - firstTarget;
+            const progress =
+              span > 0
+                ? Math.min(
+                    1,
+                    Math.max(0, (container.scrollLeft - firstTarget) / span),
+                  )
+                : 0;
+            onScrollProgress(progress);
+          }
+
+          if (suppressScrollReport.current || isScrubbing) return;
+          const center = container.scrollLeft + container.clientWidth / 2;
+          let best = 0;
+          let bestDist = Infinity;
+          cardRefs.current.forEach((card, i) => {
+            if (!card) return;
+            const cardCenter = card.offsetLeft + card.clientWidth / 2;
+            const dist = Math.abs(cardCenter - center);
+            if (dist < bestDist) {
+              bestDist = dist;
+              best = i;
+            }
+          });
+          if (best !== activeIndex) {
+            scrollOriginatedIndexChange.current = true;
+            onActiveChange(best);
           }
         });
-        if (best !== activeIndex) onActiveChange(best);
-      });
-    };
+      };
 
-    container.addEventListener("scroll", onScroll, { passive: true });
-    return () => container.removeEventListener("scroll", onScroll);
-  }, [activeIndex, onActiveChange]);
+      container.addEventListener("scroll", onScroll, { passive: true });
+      return () => container.removeEventListener("scroll", onScroll);
+    }, [activeIndex, isScrubbing, onActiveChange, onScrollProgress]);
 
-  const dayNumber = steps[activeIndex]?.dayNumber ?? 1;
+    return (
+      <div>
+        <div
+          ref={scrollRef}
+          className="flex gap-3 overflow-x-auto no-scrollbar px-[9%] pb-1 snap-x snap-mandatory"
+        >
+          <BookendCard
+            icon="home"
+            label="Trip started"
+            dateLabel={startDateLabel}
+            flags={flags}
+          />
 
+          {steps.map((step, i) => {
+            const cover = step.media[0];
+
+            return (
+              <button
+                key={step.id}
+                ref={(el) => {
+                  cardRefs.current[i] = el;
+                }}
+                type="button"
+                onClick={() => onOpenStep(i)}
+                className="relative shrink-0 w-[82%] aspect-[5/4] rounded-3xl snap-center text-left shadow-soft transition-transform active:scale-[0.98]"
+              >
+                {/* overflow-hidden lives on this inner wrapper, not the
+                  button itself — box-shadow on the same box as
+                  overflow-hidden gets clipped away by the browser. */}
+                <div className="absolute inset-0 rounded-3xl overflow-hidden border border-white/15">
+                  {cover && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={cover.thumbUrl}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                      className="absolute inset-0 w-full h-full object-cover bg-cover"
+                      style={{ backgroundImage: `url(${cover.placeholder})` }}
+                    />
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+
+                  <span className="absolute top-2.5 left-2.5 w-7 h-7 rounded-full bg-white/90 shadow-soft flex items-center justify-center text-sm">
+                    {step.flag}
+                  </span>
+                  {step.media.length > 1 && (
+                    <span className="absolute top-2.5 right-2.5 bg-black/50 text-white text-[11px] font-semibold px-2 py-1 rounded-full">
+                      📷 {step.media.length}
+                    </span>
+                  )}
+
+                  <div className="absolute bottom-3 left-3 right-3">
+                    <p className="text-white font-bold text-base leading-tight drop-shadow">
+                      {step.title}
+                    </p>
+                    <p className="text-white/85 text-xs mt-0.5">
+                      {step.countryName}
+                    </p>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+
+          <BookendCard
+            icon="flag"
+            label="Trip finished"
+            dateLabel={endDateLabel}
+            flags={flags}
+          />
+        </div>
+      </div>
+    );
+  },
+);
+
+export default StepCarousel;
+
+function BookendCard({
+  icon,
+  label,
+  dateLabel,
+  flags,
+}: {
+  icon: "home" | "flag";
+  label: string;
+  dateLabel: string;
+  flags: string[];
+}) {
   return (
-    <div>
-      <div className="flex justify-center -mt-3 mb-2 relative z-10">
-        <span className="bg-ps-link text-white text-xs font-semibold px-3 py-1 rounded-full shadow">
-          DAY {dayNumber}
-        </span>
+    <div className="relative shrink-0 w-[82%] aspect-[5/4] rounded-3xl snap-center border border-white/15 bg-ps-navy flex flex-col items-center justify-center text-center px-4 shadow-soft">
+      <div className="w-11 h-11 rounded-full bg-white flex items-center justify-center">
+        {icon === "home" ? (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M3 11l9-8 9 8"
+              stroke="#00293D"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M5 10v10h14V10"
+              stroke="#00293D"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        ) : (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M5 3v18"
+              stroke="#00293D"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+            />
+            <path
+              d="M5 4h13l-3 4 3 4H5"
+              stroke="#00293D"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        )}
       </div>
-
-      <div
-        ref={scrollRef}
-        className="flex gap-3 overflow-x-auto no-scrollbar px-[12.5%] pb-1 snap-x snap-mandatory"
-      >
-        {steps.map((step, i) => {
-          const cover = step.media[0];
-          const photoCount = step.media.filter(
-            (m) => m.type === "IMAGE",
-          ).length;
-          const videoCount = step.media.filter(
-            (m) => m.type === "VIDEO",
-          ).length;
-
-          return (
-            <button
-              key={step.id}
-              ref={(el) => {
-                cardRefs.current[i] = el;
-              }}
-              type="button"
-              onClick={() => onOpenStep(i)}
-              className="relative shrink-0 w-[75%] aspect-[4/5] rounded-2xl overflow-hidden snap-center text-left"
-            >
-              {cover && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={cover.thumbUrl}
-                  alt=""
-                  loading="lazy"
-                  className="absolute inset-0 w-full h-full object-cover bg-cover"
-                  style={{ backgroundImage: `url(${cover.placeholder})` }}
-                />
-              )}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
-
-              {step.isLatest && (
-                <span className="absolute top-2 left-2 bg-ps-accent text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">
-                  New
-                </span>
-              )}
-
-              <div className="absolute bottom-9 left-3 right-3">
-                <p className="text-white font-bold text-base leading-tight drop-shadow">
-                  {step.title}
-                </p>
-                <p className="text-white/85 text-xs mt-0.5">
-                  {step.flag} {step.countryName}
-                </p>
-              </div>
-
-              <div className="absolute bottom-0 inset-x-0 bg-white/95 px-3 py-1.5 flex items-center gap-3 text-[11px] text-ps-muted font-medium">
-                <span>📷 {photoCount}</span>
-                {videoCount > 0 && <span>🎬 {videoCount}</span>}
-              </div>
-            </button>
-          );
-        })}
-      </div>
+      <p className="text-white font-bold text-sm mt-2">{label}</p>
+      <p className="text-white/70 text-xs mt-1">{dateLabel}</p>
+      {flags.length > 0 && <p className="text-base mt-2">{flags.join(" ")}</p>}
     </div>
   );
 }

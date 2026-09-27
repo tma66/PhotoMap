@@ -2,18 +2,20 @@
 // components. Everything the client would otherwise have to recompute
 // (labels, flags, "traveled for" gaps) is precomputed here instead, so
 // client components stay dumb renderers with no date-math duplication.
-export interface MediaView {
+interface MediaView {
   hash: string;
   type: "IMAGE" | "VIDEO";
   thumbUrl: string;
   displayUrl: string;
   placeholder: string;
+  /** Set only for type "VIDEO" — the playable derivative (thumb/display are
+   * its poster frame, same as any other photo). */
+  videoUrl: string | null;
   durationSec: number | null;
 }
 
 export interface StepView {
   id: string;
-  order: number;
   dayNumber: number;
   title: string;
   locationName: string;
@@ -22,25 +24,22 @@ export interface StepView {
   flag: string;
   dateLabel: string;
   weatherIcon: string;
-  weatherTempC: number | null;
+  weatherTempF: number | null;
   lat: number;
   lng: number;
   arrivedAtISO: string;
   transportMode: string;
   journalText: string;
-  travelGapLabel: string | null;
-  isLatest: boolean;
   media: MediaView[];
 }
 
 export interface TripView {
-  slug: string;
   title: string;
-  description: string;
-  ownerName: string;
-  ownerAvatarUrl: string | null;
+  owner: { name: string; avatarUrl: string | null };
   flags: string[];
-  statsLabel: string; // "28 days · 37 steps · 4,099 km"
+  statsLabel: string; // "28 days · 6 cities · 4,099 km"
+  startDateLabel: string; // "SUN, AUG 16, 2026" — trip-started bookend card
+  endDateLabel: string; // "SUN, AUG 23, 2026" — trip-finished bookend card
   steps: StepView[];
   trackPoints: { tISO: string; lat: number; lng: number }[];
 }

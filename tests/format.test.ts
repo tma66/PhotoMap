@@ -3,7 +3,6 @@ import {
   countryCodeToFlagEmoji,
   formatDayMonth,
   formatDistance,
-  formatTravelGap,
   weatherCodeToIcon,
 } from "@/lib/format";
 
@@ -17,20 +16,6 @@ describe("countryCodeToFlagEmoji", () => {
     expect(countryCodeToFlagEmoji("")).toBe("");
     expect(countryCodeToFlagEmoji("FRA")).toBe("");
     expect(countryCodeToFlagEmoji("1F")).toBe("");
-  });
-});
-
-describe("formatTravelGap", () => {
-  it("formats minutes, hours, and days appropriately", () => {
-    const base = Date.parse("2025-06-10T09:00:00Z");
-    expect(formatTravelGap(base, base + 30 * 60_000)).toBe("30 minutes");
-    expect(formatTravelGap(base, base + 4 * 3_600_000)).toBe("4 hours");
-    expect(formatTravelGap(base, base + 2 * 86_400_000)).toBe("2 days");
-  });
-
-  it("never goes negative for an out-of-order pair", () => {
-    const base = Date.parse("2025-06-10T09:00:00Z");
-    expect(formatTravelGap(base, base - 10_000)).toBe("1 minute");
   });
 });
 
@@ -49,10 +34,17 @@ describe("weatherCodeToIcon", () => {
 
 describe("formatDayMonth", () => {
   it("formats without a year", () => {
-    // Midday, not midnight: keeps this stable regardless of the local
-    // timezone the test runs in (formatDayMonth uses toLocaleDateString,
-    // which renders in local time).
     expect(formatDayMonth(new Date("2025-07-13T12:00:00Z"))).toMatch(/13/);
+  });
+
+  it("reads the date in UTC regardless of the server's local timezone", () => {
+    // Real regression: this repo's dev/prod machine runs in
+    // America/Los_Angeles (UTC-7/8). `arrivedAt`/`takenAt` are naive local
+    // wall-clock time encoded as if it were UTC (see
+    // src/ingest/timezone.ts) — formatting this early-morning value without
+    // pinning timeZone: "UTC" reinterpreted it in the server's own zone and
+    // rolled it back to the previous calendar day.
+    expect(formatDayMonth(new Date("2026-08-18T01:40:39Z"))).toBe("August 18");
   });
 });
 

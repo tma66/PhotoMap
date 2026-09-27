@@ -1,7 +1,8 @@
 export function mediaUrl(
   slug: string,
   hash: string,
-  variant: "thumb" | "display",
+  variant: "thumb" | "display" | "video",
 ): string {
-  return `/media/${slug}/${hash}-${variant}.jpg`;
+  const ext = variant === "video" ? "mp4" : "jpg";
+  return `/media/${slug}/${hash}-${variant}.${ext}`;
 }

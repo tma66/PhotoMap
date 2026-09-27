@@ -1,0 +1,54 @@
+{
+  "photos": {
+    "2025-06-10": [
+      {
+        "file": "01-paris-eiffel.jpg",
+        "coord": "48.8584,2.2944999999999998",
+        "locationName": "Neuilly-sur-Seine",
+        "weatherTempF": 64,
+        "weatherCode": 3
+      },
+      {
+        "file": "02-paris-louvre.jpg",
+        "coord": "48.8606,2.3376",
+        "locationName": "Paris",
+        "weatherTempF": 64,
+        "weatherCode": 3
+      }
+    ],
+    "2025-06-11": [
+      {
+        "file": "03-lyon-vieux.jpg",
+        "coord": "45.7626,4.8271999999999995",
+        "locationName": "Lyon",
+        "weatherTempF": 72,
+        "weatherCode": 1
+      },
+      {
+        "file": "04-lyon-fourviere.jpg",
+        "coord": "45.7622,4.8222",
+        "locationName": "Lyon",
+        "weatherTempF": 77,
+        "weatherCode": 3
+      }
+    ],
+    "2025-06-12": [
+      {
+        "file": "05-nice-promenade.jpg",
+        "coord": "43.695299999999996,7.2654",
+        "locationName": "Nice",
+        "weatherTempF": 74,
+        "weatherCode": 1
+      }
+    ],
+    "2025-06-13": [
+      {
+        "file": "06-nice-vieux.jpg",
+        "coord": "43.6975,7.2769",
+        "locationName": "Nice",
+        "weatherTempF": 78,
+        "weatherCode": 1
+      }
+    ]
+  }
+}

@@ -41,8 +41,8 @@ model Step {
   lng           Float
   arrivedAt     DateTime
   journalText   String   @default("")
-  transportMode String   @default("FOOT") // FLIGHT|TRAIN|CAR|BUS|BOAT|FOOT|BIKE|VAN
-  weatherTempC  Float?
+  transportMode String   @default("FOOT") // FLIGHT|CAR|FOOT
+  weatherTempF  Float?
   weatherCode   Int?
 
   trip  Trip    @relation(fields: [tripId], references: [id], onDelete: Cascade)
@@ -71,8 +71,8 @@ model Media {
   @@index([stepId, order])
 }
 
-// Dense point trail for drawing the real travelled path (from photo/video GPS
-// and optional .gpx imports), simplified before being sent to the client.
+// Dense point trail for drawing the real travelled path (from photo/video
+// GPS), simplified before being sent to the client.
 model TrackPoint {
   id     String   @id @default(cuid())
   tripId String

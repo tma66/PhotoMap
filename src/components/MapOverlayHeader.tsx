@@ -1,77 +1,105 @@
 "use client";
 
 import Link from "next/link";
+import { BackChevronIcon, CardsIcon } from "./icons";
 
 interface MapOverlayHeaderProps {
   title: string;
+  owner: { name: string; avatarUrl: string | null };
   flags: string[];
-  ownerName: string;
-  ownerAvatarUrl: string | null;
   statsLabel: string;
-  onShare: () => void;
+  mapStyleMode: "satellite" | "streets";
+  onToggleMapStyleMode: () => void;
+  onOpenGame: () => void;
 }
 
 export default function MapOverlayHeader({
   title,
+  owner,
   flags,
-  ownerName,
-  ownerAvatarUrl,
   statsLabel,
-  onShare,
+  mapStyleMode,
+  onToggleMapStyleMode,
+  onOpenGame,
 }: MapOverlayHeaderProps) {
   return (
     <div className="absolute top-0 inset-x-0 z-20 safe-top px-4 pointer-events-none">
-      <div className="flex items-center justify-between pointer-events-auto">
+      <div className="flex items-center justify-center gap-1.5 mb-1">
+        {owner.avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={owner.avatarUrl}
+            alt=""
+            decoding="async"
+            className="w-5 h-5 rounded-full object-cover"
+          />
+        ) : (
+          <div className="w-5 h-5 rounded-full bg-white/30" />
+        )}
+        <span
+          className="text-white/90 text-xs font-semibold"
+          style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}
+        >
+          {owner.name}
+        </span>
+      </div>
+
+      <div className="relative flex items-center justify-center">
         <Link
           href="/"
           aria-label="Back"
-          className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shadow"
+          className="absolute left-0 top-0 w-12 h-12 rounded-full map-icon-button flex items-center justify-center shadow-soft pointer-events-auto"
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path
-              d="M15 18l-6-6 6-6"
-              stroke="#00293D"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <BackChevronIcon size={28} color="#ffffff" />
         </Link>
 
-        <button
-          type="button"
-          onClick={onShare}
-          aria-label="Trip menu"
-          className="w-10 h-10 rounded-xl bg-ps-navy flex items-center justify-center shadow"
-        >
-          <svg width="18" height="14" viewBox="0 0 24 18" fill="none">
-            <path d="M0 1h24M0 9h24M0 17h24" stroke="#fff" strokeWidth="2" />
-          </svg>
-        </button>
-      </div>
+        <div className="absolute right-0 top-0 flex flex-col items-center gap-2 pointer-events-auto">
+          <button
+            type="button"
+            onClick={onToggleMapStyleMode}
+            aria-label={
+              mapStyleMode === "satellite"
+                ? "Switch to streets view"
+                : "Switch to satellite view"
+            }
+            className="w-12 h-12 rounded-full map-icon-button flex items-center justify-center shadow-soft"
+          >
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#ffffff"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
+              <line x1="8" y1="2" x2="8" y2="18" />
+              <line x1="16" y1="6" x2="16" y2="22" />
+            </svg>
+          </button>
 
-      <div
-        className="mt-1 text-center pointer-events-none"
-        style={{ textShadow: "0 1px 6px rgba(0,0,0,0.6)" }}
-      >
-        <div className="flex items-center justify-center gap-1.5 text-white/90 text-xs font-medium">
-          {ownerAvatarUrl && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={ownerAvatarUrl}
-              alt=""
-              className="w-4 h-4 rounded-full object-cover"
-            />
-          )}
-          <span>{ownerName}</span>
+          <button
+            type="button"
+            onClick={onOpenGame}
+            aria-label="Play matching game"
+            className="w-12 h-12 rounded-full map-icon-button flex items-center justify-center shadow-soft"
+          >
+            <CardsIcon size={22} color="#ffffff" />
+          </button>
         </div>
-        <h1 className="text-white font-bold text-xl leading-tight">
+
+        <h1
+          className="text-white font-bold text-xl leading-tight text-center pointer-events-none px-12"
+          style={{ textShadow: "0 1px 6px rgba(0,0,0,0.6)" }}
+        >
           {title} <span className="align-middle">{flags.join(" ")}</span>
         </h1>
       </div>
 
-      <div className="mt-2 flex justify-start pointer-events-none">
-        <span className="bg-black/55 text-white text-[11px] font-medium px-3 py-1.5 rounded-full">
+      <div className="mt-2 flex justify-center pointer-events-none">
+        <span className="bg-[rgba(74,74,79,0.55)] text-white text-[11px] font-medium px-3 py-1.5 rounded-full">
           {statsLabel}
         </span>
       </div>

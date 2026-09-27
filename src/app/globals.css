@@ -1,8 +1,9 @@
 @import "tailwindcss";
 
 /*
- * Palette captured live from polarsteps.com (see docs/ui-spec.md) — this is
- * our own token file, not a copy of any Polarsteps asset.
+ * Palette captured live from the travel-journal app this project is styled
+ * after (see docs/ui-spec.md) — this is our own token file, not a copy of
+ * any third-party asset.
  */
 @theme {
   --color-ps-navy: #00293d;
@@ -11,13 +12,11 @@
   --color-ps-muted-2: #69788c;
   --color-ps-border: #b8c1cc;
   --color-ps-bg: #f6f5f2;
-  --color-ps-card: #ffffff;
   --color-ps-link: #0099e5;
-  --color-ps-accent: #de2b52;
-  --color-ps-header-text: #e7eaee;
 
-  --font-sans: Montserrat, "Helvetica Neue", Arial, Helvetica, sans-serif;
-  --font-serif: "Noto Serif", Georgia, serif;
+  --font-sans:
+    -apple-system, system-ui, "Helvetica Neue", Arial, Helvetica, sans-serif;
+  --font-serif: ui-serif, Georgia, serif;
 }
 
 :root {
@@ -60,21 +59,60 @@ body {
   scrollbar-width: none;
 }
 
-/* Map pins (see components/TripMap.tsx, GlobeMap.tsx) */
+@utility shadow-soft {
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.1),
+    0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+/* Liquid-glass round buttons (back, close, map-style toggle) — blur is
+   scoped to these small controls rather than the big panels/sheets, which
+   sit over a live WebGL map that would otherwise get re-blurred every
+   frame. */
+@utility glass-button {
+  background: rgba(214, 218, 224, 0.55);
+  backdrop-filter: blur(16px) saturate(1.6);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+}
+
+/* Map header buttons (back, style toggle) and the stats pill — dark like
+   iOS 27 Safari's own back button, so they read clearly against both the
+   satellite and streets base layers instead of glass-button's light fill,
+   which washed out against light backgrounds. The stats pill in
+   MapOverlayHeader.tsx uses this same rgba as a Tailwind arbitrary value
+   (no blur there) — keep the two in sync. */
+@utility map-icon-button {
+  background: rgba(74, 74, 79, 0.55);
+  backdrop-filter: blur(16px) saturate(1.6);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+/* Map pins (see components/TripMap.tsx, GlobeMap.tsx) — .trip-pin itself
+   isn't clipped (overflow visible) so the active pin's place-name label can
+   sit outside its circular bounds; .trip-pin-photo carries the clipping for
+   the photo/fallback instead. */
 .trip-pin {
   width: 44px;
   height: 44px;
   border-radius: 9999px;
   border: 3px solid #fff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
-  overflow: hidden;
+  position: relative;
   cursor: pointer;
   transition:
     box-shadow 0.2s,
     transform 0.2s;
   background: var(--color-ps-navy);
 }
-.trip-pin img {
+.trip-pin-photo {
+  width: 100%;
+  height: 100%;
+  border-radius: 9999px;
+  overflow: hidden;
+}
+.trip-pin-photo img {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -86,10 +124,30 @@ body {
 }
 .trip-pin-active {
   box-shadow:
-    0 0 0 4px rgba(222, 43, 82, 0.55),
+    0 0 0 4px rgba(0, 153, 229, 0.55),
     0 1px 6px rgba(0, 0, 0, 0.5);
   transform: scale(1.12);
   z-index: 10;
+}
+.trip-pin-label {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 8px;
+  white-space: nowrap;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.trip-pin-active .trip-pin-label {
+  opacity: 1;
 }
 
 .globe-pin {
@@ -108,4 +166,16 @@ body {
 
 .maplibregl-ctrl-attrib {
   font-size: 10px !important;
+}
+
+/* Story view photo progress bar (components/StepStory.tsx) — a CSS
+   animation instead of a rAF-driven React state update, so the ~5s fill
+   doesn't re-render the whole story at 60fps. */
+@keyframes story-progress-fill {
+  from {
+    width: 0%;
+  }
+  to {
+    width: 100%;
+  }
 }

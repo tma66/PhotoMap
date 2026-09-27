@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  continentsVisited,
+  dayNumber,
   percentOfWorldSeen,
   tripDistanceKm,
   tripDurationDays,
@@ -37,6 +37,24 @@ describe("tripDurationDays", () => {
   });
 });
 
+describe("dayNumber", () => {
+  it("is 1 for the start's own date", () => {
+    const start = new Date("2026-08-16T22:28:33Z");
+    expect(dayNumber(start, start)).toBe(1);
+  });
+
+  it("crosses to day 2 at the UTC calendar boundary, not 24h after start", () => {
+    const start = new Date("2026-08-16T22:28:33Z");
+    // Only ~1.5h after start, but past midnight UTC into the next date.
+    expect(dayNumber(new Date("2026-08-17T00:12:30Z"), start)).toBe(2);
+  });
+
+  it("stays on day 1 right up to the UTC calendar boundary", () => {
+    const start = new Date("2026-08-16T22:28:33Z");
+    expect(dayNumber(new Date("2026-08-16T23:59:59Z"), start)).toBe(1);
+  });
+});
+
 describe("uniqueCountryCodes", () => {
   it("dedupes and drops empty codes", () => {
     const steps = [
@@ -46,19 +64,6 @@ describe("uniqueCountryCodes", () => {
       { lat: 0, lng: 0, countryCode: "CH" },
     ];
     expect(uniqueCountryCodes(steps).sort()).toEqual(["CH", "FR"]);
-  });
-});
-
-describe("continentsVisited", () => {
-  it("maps ISO codes to their region via world-countries", () => {
-    const continents = continentsVisited(["FR", "JP", "US"]);
-    expect(continents).toContain("Europe");
-    expect(continents).toContain("Asia");
-    expect(continents).toContain("Americas");
-  });
-
-  it("ignores unknown codes", () => {
-    expect(continentsVisited(["ZZ"])).toEqual([]);
   });
 });
 

@@ -5,7 +5,8 @@
 // 10km-resolution borders, features carry an ISO 3166-1 alpha-3 "A3" code).
 // Place name: nearest entry in `all-the-cities` (GeoNames-derived, ~138k
 // places with population >= 1000).
-import { booleanPointInPolygon } from "@turf/turf";
+import { booleanPointInPolygon } from "@turf/boolean-point-in-polygon";
+import { buffer } from "@turf/buffer";
 // @ts-expect-error -- no bundled type declarations for this data package
 import loadCountriesLand from "@geo-maps/countries-land-10km";
 // @ts-expect-error -- no bundled type declarations for this data package
@@ -64,6 +65,24 @@ function geometryBbox(
   return [minX, minY, maxX, maxY];
 }
 
+// Small islands/atolls are often missing from this dataset's 10km-resolution
+// land polygons even though they're clearly inhabited land — e.g. Laamu
+// Atoll, Maldives. Within this radius of a known named place, attribute the
+// point to that place's country rather than reporting open ocean.
+const NEAR_LAND_FALLBACK_KM = 50;
+
+// The same 10km resolution also clips real coastal land off a country's
+// polygon entirely — e.g. Singapore's Changi Airport, built substantially on
+// reclaimed land jutting into the strait. A point there fails every exact
+// point-in-polygon test, and previously fell straight through to the
+// nearest-named-place fallback below, which can jump across a narrow strait
+// to a closer city in the WRONG country (Changi resolved to a town in
+// Malaysia). Before that global fallback, retry with each nearby country's
+// polygon grown by a couple of km — enough to catch land the raw polygon
+// missed at the coast, not enough to bridge a real international strait.
+const NEAR_COAST_BBOX_MARGIN_DEG = 0.1; // ~11km — cheap pre-filter only
+const NEAR_COAST_BUFFER_KM = 4;
+
 /** ISO 3166-1 alpha-2 country code for a coordinate, or undefined over open ocean. */
 export function countryCodeForPoint(point: LatLng): string | undefined {
   const pt: GeoJSON.Feature<GeoJSON.Point> = {
@@ -93,7 +112,53 @@ export function countryCodeForPoint(point: LatLng): string | undefined {
       return alpha3ToAlpha2(feature.properties.A3);
     }
   }
+
+  for (const { feature, bbox } of featureBounds) {
+    const [minX, minY, maxX, maxY] = bbox;
+    if (
+      point.lng < minX - NEAR_COAST_BBOX_MARGIN_DEG ||
+      point.lng > maxX + NEAR_COAST_BBOX_MARGIN_DEG ||
+      point.lat < minY - NEAR_COAST_BBOX_MARGIN_DEG ||
+      point.lat > maxY + NEAR_COAST_BBOX_MARGIN_DEG
+    ) {
+      continue;
+    }
+    const grown = buffer(feature as GeoJSON.Feature, NEAR_COAST_BUFFER_KM, {
+      units: "kilometers",
+    });
+    if (
+      grown &&
+      booleanPointInPolygon(
+        pt,
+        grown as GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>,
+      )
+    ) {
+      return alpha3ToAlpha2(feature.properties.A3);
+    }
+  }
+
+  const nearest = nearestCity(point, cities);
+  if (nearest && nearest.dist <= NEAR_LAND_FALLBACK_KM) {
+    return nearest.city.country;
+  }
   return undefined;
+}
+
+function nearestCity(
+  point: LatLng,
+  pool: CityRecord[],
+): { city: CityRecord; dist: number } | undefined {
+  let best: CityRecord | undefined;
+  let bestDist = Infinity;
+  for (const city of pool) {
+    const [lng, lat] = city.loc.coordinates;
+    const d = haversineKm(point, { lat, lng });
+    if (d < bestDist) {
+      bestDist = d;
+      best = city;
+    }
+  }
+  return best ? { city: best, dist: bestDist } : undefined;
 }
 
 /**
@@ -102,22 +167,10 @@ export function countryCodeForPoint(point: LatLng): string | undefined {
  * it; falls back to the globally nearest city otherwise.
  */
 export function nearestPlaceName(point: LatLng, countryCode?: string): string {
-  let best: CityRecord | undefined;
-  let bestDist = Infinity;
-
   const pool = countryCode
     ? cities.filter((c) => c.country === countryCode)
     : cities;
   const searchPool = pool.length > 0 ? pool : cities;
 
-  for (const city of searchPool) {
-    const [lng, lat] = city.loc.coordinates;
-    const d = haversineKm(point, { lat, lng });
-    if (d < bestDist) {
-      bestDist = d;
-      best = city;
-    }
-  }
-
-  return best?.name ?? "Unknown location";
+  return nearestCity(point, searchPool)?.city.name ?? "Unknown location";
 }

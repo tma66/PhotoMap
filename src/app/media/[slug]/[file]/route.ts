@@ -2,9 +2,11 @@
 // Originals in ASSETS_DIR are never reachable through this route.
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
+import { Readable } from "node:stream";
 import { join, resolve } from "node:path";
 import { NextRequest } from "next/server";
 import { isSafeMediaRequest } from "@/lib/media-path-safety";
+import { parseByteRange } from "@/lib/http-range";
 
 // turbopackIgnore: this is a runtime data path (photo cache), not something
 // to trace/bundle — without the hint Turbopack pulls the whole repo into
@@ -37,49 +39,28 @@ export async function GET(
     return new Response("Not found", { status: 404 });
   }
 
-  const range = request.headers.get("range");
   const baseHeaders = {
-    "Content-Type": "image/jpeg",
+    "Content-Type": file.endsWith(".mp4") ? "video/mp4" : "image/jpeg",
     "Cache-Control": "public, max-age=31536000, immutable",
     "Accept-Ranges": "bytes",
   };
 
+  const range = parseByteRange(request.headers.get("range"), size);
   if (range) {
-    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-    if (match) {
-      const start = match[1] ? parseInt(match[1], 10) : 0;
-      const end = match[2] ? parseInt(match[2], 10) : size - 1;
-      if (start < size && end < size && start <= end) {
-        const stream = createReadStream(absPath, { start, end });
-        return new Response(webStreamFrom(stream), {
-          status: 206,
-          headers: {
-            ...baseHeaders,
-            "Content-Range": `bytes ${start}-${end}/${size}`,
-            "Content-Length": String(end - start + 1),
-          },
-        });
-      }
-    }
+    const { start, end } = range;
+    const stream = createReadStream(absPath, { start, end });
+    return new Response(Readable.toWeb(stream) as ReadableStream, {
+      status: 206,
+      headers: {
+        ...baseHeaders,
+        "Content-Range": `bytes ${start}-${end}/${size}`,
+        "Content-Length": String(end - start + 1),
+      },
+    });
   }
 
   const stream = createReadStream(absPath);
-  return new Response(webStreamFrom(stream), {
+  return new Response(Readable.toWeb(stream) as ReadableStream, {
     headers: { ...baseHeaders, "Content-Length": String(size) },
-  });
-}
-
-function webStreamFrom(nodeStream: NodeJS.ReadableStream): ReadableStream {
-  return new ReadableStream({
-    start(controller) {
-      nodeStream.on("data", (chunk) => controller.enqueue(chunk));
-      nodeStream.on("end", () => controller.close());
-      nodeStream.on("error", (err) => controller.error(err));
-    },
-    cancel() {
-      if ("destroy" in nodeStream && typeof nodeStream.destroy === "function") {
-        nodeStream.destroy();
-      }
-    },
   });
 }

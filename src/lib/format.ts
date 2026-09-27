@@ -6,38 +6,39 @@ export function formatDistance(km: number): string {
   return `${Math.round(value).toLocaleString()} ${UNITS}`;
 }
 
-export function formatDayMonthYear(date: Date): string {
-  return date.toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
+// `date` here is always "naive local wall-clock time encoded as if it were
+// UTC" (see src/ingest/timezone.ts) — a real timezone name would double-shift
+// it. `timeZone: "UTC"` reads the encoded numbers back out as-is, regardless
+// of the server's own local timezone.
 export function formatDayMonth(date: Date): string {
-  return date.toLocaleDateString("en-US", { day: "numeric", month: "long" });
+  return date.toLocaleDateString("en-US", {
+    day: "numeric",
+    month: "long",
+    timeZone: "UTC",
+  });
 }
 
 export function formatMonthYearCaps(date: Date): string {
   return date
-    .toLocaleDateString("en-US", { month: "long", year: "numeric" })
+    .toLocaleDateString("en-US", {
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC",
+    })
     .toUpperCase();
 }
 
-/** "3 hours" / "2 days" gap between two timestamps, for the timeline connector. */
-export function formatTravelGap(fromMs: number, toMs: number): string {
-  const diffMs = Math.max(0, toMs - fromMs);
-  const hours = diffMs / 3_600_000;
-  if (hours < 1) {
-    const mins = Math.max(1, Math.round(diffMs / 60_000));
-    return `${mins} minute${mins === 1 ? "" : "s"}`;
-  }
-  if (hours < 24) {
-    const h = Math.round(hours);
-    return `${h} hour${h === 1 ? "" : "s"}`;
-  }
-  const days = Math.round(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"}`;
+/** "SUN, AUG 16, 2026" — for the trip-started/trip-finished bookend cards. */
+export function formatBookendDate(date: Date): string {
+  return date
+    .toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      timeZone: "UTC",
+    })
+    .toUpperCase();
 }
 
 export function countryCodeToFlagEmoji(cc: string): string {

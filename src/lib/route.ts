@@ -1,6 +1,6 @@
 // Builds the GeoJSON the map draws for a trip: a dashed great-circle arc for
 // each flight leg, and the dense actual-photos trail for ground legs.
-import { greatCircleArc, type LatLng } from "./geo";
+import { greatCircleArc } from "./geo";
 
 export interface RouteStep {
   id: string;
@@ -8,6 +8,7 @@ export interface RouteStep {
   lng: number;
   arrivedAt: Date;
   transportMode: string;
+  locationName: string;
 }
 
 export interface RouteTrackPoint {
@@ -16,12 +17,8 @@ export interface RouteTrackPoint {
   lng: number;
 }
 
-export interface RouteLeg {
-  fromStepId: string;
-  toStepId: string;
-  isFlight: boolean;
+interface RouteLeg {
   coordinates: [number, number][]; // [lng, lat], GeoJSON order
-  midpoint: LatLng;
 }
 
 export function buildRouteLegs(
@@ -33,6 +30,7 @@ export function buildRouteLegs(
   for (let i = 1; i < steps.length; i++) {
     const from = steps[i - 1]!;
     const to = steps[i]!;
+    if (from.locationName === to.locationName) continue; // same city, no line
     const isFlight = to.transportMode === "FLIGHT";
 
     let coords: [number, number][];
@@ -47,20 +45,12 @@ export function buildRouteLegs(
       coords =
         between.length >= 2
           ? between.map((p) => [p.lng, p.lat] as [number, number])
-          : [
-              [from.lng, from.lat],
-              [to.lng, to.lat],
-            ];
+          : greatCircleArc(from, to, 24).map(
+              (p) => [p.lng, p.lat] as [number, number],
+            );
     }
 
-    const mid = coords[Math.floor(coords.length / 2)]!;
-    legs.push({
-      fromStepId: from.id,
-      toStepId: to.id,
-      isFlight,
-      coordinates: coords,
-      midpoint: { lat: mid[1], lng: mid[0] },
-    });
+    legs.push({ coordinates: coords });
   }
 
   return legs;
@@ -68,12 +58,12 @@ export function buildRouteLegs(
 
 export function legsToGeoJSON(
   legs: RouteLeg[],
-): GeoJSON.FeatureCollection<GeoJSON.LineString, { isFlight: boolean }> {
+): GeoJSON.FeatureCollection<GeoJSON.LineString> {
   return {
     type: "FeatureCollection",
     features: legs.map((leg) => ({
       type: "Feature",
-      properties: { isFlight: leg.isFlight },
+      properties: {},
       geometry: { type: "LineString", coordinates: leg.coordinates },
     })),
   };
