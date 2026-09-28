@@ -7,6 +7,7 @@ import {
   formatBookendDate,
   formatDayMonth,
   formatDistance,
+  formatMonthYear,
   weatherCodeToIcon,
 } from "@/lib/format";
 import { dayNumber, tripDurationDays, uniqueCityCount } from "@/lib/stats";
@@ -120,10 +121,15 @@ export default async function TripPage({ params }: PageProps) {
 
   const cityCount = uniqueCityCount(steps);
 
+  const isMultiTrip = tripsInFolder > 1;
   const view: TripView = {
-    title: trip.title,
+    // In a folder of several trips, the date tells them apart ("EDC May
+    // 2024", matching its tile on the selector).
+    title: isMultiTrip
+      ? `${trip.title} ${formatMonthYear(trip.startDate)}`
+      : trip.title,
     // Back to this folder's trip selector when there's one to go back to.
-    backHref: tripsInFolder > 1 ? `/m/${slug}` : "/",
+    backHref: isMultiTrip ? `/m/${slug}` : "/",
     path: `/m/${slug}/${number}`,
     zoomName: zoomName(slug, number),
     owner: { name: profile.name, avatarUrl: profile.avatar },
