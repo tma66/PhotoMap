@@ -1,5 +1,7 @@
 # PhotoMap
 
+<img src="https://github.com/tma66/PhotoMap/releases/download/readme-assets/demo.webp" alt="PhotoMap demo" width="360" />
+
 A self-hosted, read-only travel journal generated automatically from your own
 photos and videos, with no login, no cloud, and no editor UI. Point it at a folder of
 photos and it builds a mobile trip page: a day-by-day map, a swipeable story
@@ -19,8 +21,6 @@ NFC tag on a fridge magnet works great).
 
 ## Prerequisites
 
-- **macOS.** HEIC→JPEG conversion shells out to the built-in `sips` tool, so
-  this doesn't run on Linux/Windows.
 - **Node 22.10+**
 - **ffmpeg**: `brew install ffmpeg` (transcodes videos, extracts poster
   frames)
@@ -45,8 +45,7 @@ npm run build && npm start   # http://localhost:3000
 ## Adding photos & videos
 
 1. Make a folder under `assets/`, e.g. `assets/japan-2025/`. **The folder
-   name becomes the trip's URL slug (`/m/japan-2025`); don't rename it
-   later**, especially once it's on an NFC tag.
+   name becomes the trip's URL slug** (`/m/japan-2025`).
 2. Drop photos (JPEG/HEIC/PNG) and videos (MOV/MP4/M4V) in. A caption comes
    from a photo's "Description"/IPTC field (Apple Photos: right-click → Get
    Info → add a caption before exporting). A photo or video with no GPS, on a
@@ -113,36 +112,7 @@ Run the production build as a long-lived process:
 npm run build && npm start
 ```
 
-Visit `http://localhost:3000` on this Mac to view it right away, before
-setting up remote access below.
-
-**Keep it running across reboots/crashes:** copy `scripts/com.photomap.web.plist`
-and `scripts/com.photomap.ingest.plist` into `~/Library/LaunchAgents/`,
-edit the `WorkingDirectory` path in each to where you cloned the repo, then:
-
-```
-launchctl load ~/Library/LaunchAgents/com.photomap.web.plist
-launchctl load ~/Library/LaunchAgents/com.photomap.ingest.plist
-```
-
-Also turn off display-sleep for this Mac (System Settings → Lock Screen), or
-run under `caffeinate -s`.
-
-**Expose it beyond your LAN** with [Tailscale Funnel](https://tailscale.com/):
-
-```
-brew install --cask tailscale
-# sign in, then enable Funnel for this device in the Tailscale admin console
-tailscale funnel --bg 3000
-tailscale funnel status   # prints your public https://<name>.<tailnet>.ts.net URL
-```
-
-(`scripts/start-funnel.sh` does the same, reading the port from `$PORT`.)
-
-**Write an NFC tag** (free app: NXP TagWriter or NFC Tools) with a URL
-record pointing at `https://<your-funnel-url>/m/<slug>`. Test it with your
-own phone before sticking it on anything, and lock the tag once it works so
-it can't be accidentally overwritten.
+Visit `http://localhost:3000` to view it right away
 
 ## Environment variables
 
@@ -159,12 +129,6 @@ about up front:
   `--photos-template` (weather is otherwise cached into `trip.json`, never
   fetched during a normal ingest).
 - `UNITS`: `km` or `mi`.
-
-## Backups
-
-`assets/` is the only thing that matters; back it up however you already
-back up this Mac. The SQLite DB (`prisma/data/`) and resized-photo cache
-(`data/cache/`) are both fully regenerable with `npm run ingest -- --rebuild`.
 
 ## License
 
