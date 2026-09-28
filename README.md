@@ -67,9 +67,10 @@ npm run ingest -- --photos-template japan-2025   # or omit the slug for every tr
 
 This (re)writes `assets/japan-2025/trip.json`'s `photos` block: one entry per
 photo, grouped by day, with `coord`/location/weather auto-filled for anything
-already geotagged. Type in a `coord` (`"lat,lng"`) for anything left blank,
-then re-ingest normally. **The `--` before the flag is required**: without
-it, npm swallows the flag and runs a plain ingest instead.
+already geotagged, then re-ingests the trip so the site picks it up right
+away. Type in a `coord` (`"lat,lng"`) for anything left blank, then re-run
+the same command. **The `--` before the flag is required**: without it, npm
+swallows the flag and runs a plain ingest instead.
 
 ### Other overrides
 

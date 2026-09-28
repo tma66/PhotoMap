@@ -7,7 +7,6 @@ import MapOverlayHeader from "./MapOverlayHeader";
 import StepCarousel, { type StepCarouselHandle } from "./StepCarousel";
 import TripScrubber, { type TripScrubberHandle } from "./TripScrubber";
 import StepStory from "./StepStory";
-import MemoryGame from "./MemoryGame";
 import type { TripView as TripViewData } from "@/lib/trip-view";
 
 // maplibre-gl is a large library — loading it after the initial paint lets
@@ -17,7 +16,6 @@ const TripMap = dynamic(() => import("./TripMap"), { ssr: false });
 export default function TripView({ trip }: { trip: TripViewData }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [storyOpen, setStoryOpen] = useState(false);
-  const [gameOpen, setGameOpen] = useState(false);
   const [storyEnterAtEnd, setStoryEnterAtEnd] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [mapStyleMode, setMapStyleMode] = useState<MapStyleMode>("streets");
@@ -53,22 +51,6 @@ export default function TripView({ trip }: { trip: TripViewData }) {
     [trip.trackPoints],
   );
 
-  // One thumbUrl per unique photo across the whole trip — the memory game
-  // samples its 8 pairs from this pool each time it's opened.
-  const gamePhotoPool = useMemo(() => {
-    const seen = new Set<string>();
-    const urls: string[] = [];
-    for (const step of trip.steps) {
-      for (const media of step.media) {
-        if (media.type === "IMAGE" && !seen.has(media.hash)) {
-          seen.add(media.hash);
-          urls.push(media.thumbUrl);
-        }
-      }
-    }
-    return urls;
-  }, [trip.steps]);
-
   const activeStepId = trip.steps[activeIndex]?.id ?? null;
 
   const handleSelectStepOnMap = (id: string) => {
@@ -96,7 +78,6 @@ export default function TripView({ trip }: { trip: TripViewData }) {
         onToggleMapStyleMode={() =>
           setMapStyleMode((m) => (m === "satellite" ? "streets" : "satellite"))
         }
-        onOpenGame={() => setGameOpen(true)}
       />
 
       <div className="absolute bottom-0 inset-x-0 z-20 pt-3 safe-bottom">
@@ -150,13 +131,6 @@ export default function TripView({ trip }: { trip: TripViewData }) {
             setStoryEnterAtEnd(Boolean(enterAtEnd));
             setActiveIndex(i);
           }}
-        />
-      )}
-
-      {gameOpen && (
-        <MemoryGame
-          photoUrls={gamePhotoPool}
-          onClose={() => setGameOpen(false)}
         />
       )}
     </div>

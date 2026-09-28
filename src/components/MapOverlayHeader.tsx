@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BackChevronIcon, CardsIcon } from "./icons";
+import { BackChevronIcon } from "./icons";
 
 interface MapOverlayHeaderProps {
   title: string;
@@ -10,7 +10,6 @@ interface MapOverlayHeaderProps {
   statsLabel: string;
   mapStyleMode: "satellite" | "streets";
   onToggleMapStyleMode: () => void;
-  onOpenGame: () => void;
 }
 
 export default function MapOverlayHeader({
@@ -20,7 +19,6 @@ export default function MapOverlayHeader({
   statsLabel,
   mapStyleMode,
   onToggleMapStyleMode,
-  onOpenGame,
 }: MapOverlayHeaderProps) {
   return (
     <div className="absolute top-0 inset-x-0 z-20 safe-top px-4 pointer-events-none">
@@ -78,15 +76,6 @@ export default function MapOverlayHeader({
               <line x1="8" y1="2" x2="8" y2="18" />
               <line x1="16" y1="6" x2="16" y2="22" />
             </svg>
-          </button>
-
-          <button
-            type="button"
-            onClick={onOpenGame}
-            aria-label="Play matching game"
-            className="w-12 h-12 rounded-full map-icon-button flex items-center justify-center shadow-soft"
-          >
-            <CardsIcon size={22} color="#ffffff" />
           </button>
         </div>
 
