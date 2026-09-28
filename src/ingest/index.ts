@@ -20,9 +20,11 @@
 //     locationName/weather auto-fill too (once network-fetched, this is the
 //     only step that talks to the network — see src/ingest/photo-overrides.ts),
 //     AND any photo whose local day was previously wrong (e.g. it only had
-//     mtime to go on) gets re-filed under the now-correct date. The leading
-//     `--` is required (without it, npm won't forward the flag and just
-//     runs a plain ingest instead).
+//     mtime to go on) gets re-filed under the now-correct date. Each
+//     affected trip is then re-ingested into the DB, so the site reflects
+//     the refreshed trip.json (and any photos removed from assets/) right
+//     away. The leading `--` is required (without it, npm won't forward the
+//     flag and just runs a plain ingest instead).
 
 process.on("unhandledRejection", (reason) => {
   console.error("Unhandled Rejection in ingest:", reason);
@@ -450,6 +452,7 @@ async function main(): Promise<void> {
     const slugs = slug ? [slug] : await listTripSlugs();
     for (const s of slugs) {
       await writePhotoTemplate(s);
+      await ingestTrip(s);
     }
     await prisma.$disconnect();
     return;

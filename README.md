@@ -6,9 +6,6 @@ photos and it builds a mobile trip page: a day-by-day map, a swipeable story
 view, and a 3D globe of every trip. Share a trip by handing out its URL (an
 NFC tag on a fridge magnet works great).
 
-Also includes a 4×4 photo-matching minigame built from each trip's own
-photos, because why not.
-
 ## Features
 
 - Groups photos/videos into day-by-day "steps" from EXIF/QuickTime GPS + date,
