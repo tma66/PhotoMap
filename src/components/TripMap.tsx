@@ -10,7 +10,13 @@ import {
   type RouteStep,
   type RouteTrackPoint,
 } from "@/lib/route";
-import { labelsSource, satelliteSource, streetsSource } from "@/lib/map-style";
+import { haversineKm } from "@/lib/geo";
+import {
+  GLOBE_SKY,
+  labelsSource,
+  satelliteSource,
+  streetsSource,
+} from "@/lib/map-style";
 
 export interface MapStep extends RouteStep {
   thumbUrl: string | null;
@@ -23,6 +29,8 @@ interface TripMapProps {
   trackPoints: RouteTrackPoint[];
   activeStepId: string | null;
   isScrubbing?: boolean;
+  /** Something opaque (the story view) covers the whole map. */
+  hidden?: boolean;
   styleMode: MapStyleMode;
   onSelectStep: (id: string) => void;
 }
@@ -36,6 +44,7 @@ function routeColorFor(styleMode: MapStyleMode): string {
 }
 
 const LOW_RES_MAX_ZOOM = 2;
+const LONG_FLIGHT_KM = 300; // same cutoff ingest uses for a flight leg
 
 // Raster layers shown per style, bottom to top. The satellite labels overlay
 // isn't needed on streets, whose tiles carry their own labels.
@@ -62,9 +71,12 @@ const LOW_RES_SOURCES: Record<
 // Warms the browser cache with every low-res underlay tile (21 in total for
 // zooms 0–2) so the first long flight doesn't wait on them mid-air and show
 // dark holes. MapLibre requests the same URLs later and gets cache hits.
+// Once per style per page load — later trip pages reuse the same tiles.
+const prefetchedStyles = new Set<MapStyleMode>();
 function prefetchLowResTiles(styleMode: MapStyleMode): void {
   const template = LOW_RES_SOURCES[styleMode]().tiles?.[0];
-  if (!template) return;
+  if (!template || prefetchedStyles.has(styleMode)) return;
+  prefetchedStyles.add(styleMode);
   for (let z = 0; z <= LOW_RES_MAX_ZOOM; z++) {
     for (let x = 0; x < 2 ** z; x++) {
       for (let y = 0; y < 2 ** z; y++) {
@@ -92,19 +104,7 @@ function buildMapStyle(styleMode: MapStyleMode): maplibregl.StyleSpecification {
   return {
     version: 8,
     projection: { type: "globe" },
-    sky: {
-      "atmosphere-blend": [
-        "interpolate",
-        ["linear"],
-        ["zoom"],
-        0,
-        1,
-        5,
-        1,
-        7,
-        0,
-      ],
-    },
+    sky: GLOBE_SKY,
     sources: {
       satellite: satelliteSource(),
       streets: streetsSource(),
@@ -142,6 +142,7 @@ export default function TripMap({
   trackPoints,
   activeStepId,
   isScrubbing = false,
+  hidden = false,
   styleMode,
   onSelectStep,
 }: TripMapProps) {
@@ -159,6 +160,9 @@ export default function TripMap({
       center: [steps[0]!.lng, steps[0]!.lat],
       zoom: 13,
       attributionControl: false,
+      // Imagery doesn't change while a page is open — don't re-request
+      // tiles just because their cache lifetime ran out.
+      refreshExpiredTiles: false,
     });
     mapRef.current = map;
 
@@ -251,13 +255,29 @@ export default function TripMap({
     const step = steps.find((s) => s.id === activeStepId);
     if (!step || !map) return;
 
-    if (isScrubbing) {
+    if (hidden) {
+      // Nobody can see a flight — jump straight there, loading only the
+      // destination's tiles (ready for when the map shows again) instead of
+      // every zoom level along the way.
+      map.jumpTo({ center: [step.lng, step.lat], zoom: 13 });
+    } else if (isScrubbing) {
       // Short, cheap pan while dragging — a full flyTo per step would
       // fight itself and load far more tiles than a fast drag needs.
       map.easeTo({ center: [step.lng, step.lat], duration: 250 });
     } else {
-      map.flyTo({ center: [step.lng, step.lat], zoom: 13, duration: 2500 });
+      // Twice as long for a flight-scale hop (e.g. between countries), so
+      // the pull-back over the globe doesn't race by.
+      const { lat, lng } = map.getCenter();
+      const far = haversineKm({ lat, lng }, step) > LONG_FLIGHT_KM;
+      map.flyTo({
+        center: [step.lng, step.lat],
+        zoom: 13,
+        duration: far ? 5000 : 2500,
+      });
     }
+    // `hidden` is read, not a dependency: showing the map again shouldn't
+    // re-fly to the step it's already on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeStepId, steps, isScrubbing]);
 
   // Flip the visible base layer. Guarded on isStyleLoaded() since this can

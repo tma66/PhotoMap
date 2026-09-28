@@ -45,7 +45,11 @@ npm run build && npm start   # http://localhost:3000
 ## Adding photos & videos
 
 1. Make a folder under `assets/`, e.g. `assets/japan-2025/`. **The folder
-   name becomes the trip's URL slug** (`/m/japan-2025`).
+   name becomes the trip's URL slug** (`/m/japan-2025/1`). One folder can
+   hold several trips (e.g. the same festival every year): put each trip's
+   photos in a numbered subfolder (`assets/edc/1/`, `assets/edc/3/`). The
+   number is the trip's URL (`/m/edc/3`), and `/m/edc` becomes a page to
+   pick between them. A folder with only photos in it is a single trip.
 2. Drop photos (JPEG/HEIC/PNG) and videos (MOV/MP4/M4V) in. A caption comes
    from a photo's "Description"/IPTC field (Apple Photos: right-click → Get
    Info → add a caption before exporting). A photo or video with no GPS, on a
@@ -69,7 +73,10 @@ photo, grouped by day, with `coord`/location/weather auto-filled for anything
 already geotagged, then re-ingests the trip so the site picks it up right
 away. Type in a `coord` (`"lat,lng"`) for anything left blank, then re-run
 the same command. **The `--` before the flag is required**: without it, npm
-swallows the flag and runs a plain ingest instead.
+swallows the flag and runs a plain ingest instead. In a folder with trip
+subfolders, `photos` is grouped by subfolder number first
+(`{ "1": { "2025-05-16": [...] }, "3": { ... } }`). A trip with no
+geotagged photo at all is left off the site until you fill in a `coord`.
 
 ### Other overrides
 
@@ -87,6 +94,8 @@ Optional `assets/japan-2025/trip.json` fields, on top of the auto-filled
 - `cover`: filename of the photo used as the trip's card image (defaults to
   the first step's first photo).
 - `stepTitles`: override a step's auto-generated title, keyed by day number.
+  In a folder holding several trips, nest it by trip number:
+  `{ "2": { "0": "Main stage" } }`.
 
 Optional `assets/profile.json` sets the home page's name/bio/avatar:
 `{ "name": "...", "bio": "...", "avatar": "/your-photo.png" }` (the photo

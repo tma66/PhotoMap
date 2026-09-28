@@ -13,7 +13,8 @@ datasource db {
 
 model Trip {
   id            String   @id @default(cuid())
-  slug          String   @unique
+  slug          String   // assets/ folder name; one folder can hold several trips
+  number        Int      @default(1) // 1-based, oldest first within the folder
   title         String
   description   String   @default("")
   coverMediaId  String?
@@ -27,6 +28,7 @@ model Trip {
   steps       Step[]
   trackPoints TrackPoint[]
 
+  @@unique([slug, number])
   @@index([slug])
 }
 

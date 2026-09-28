@@ -3,6 +3,7 @@ import {
   countryCodeToFlagEmoji,
   formatDayMonth,
   formatDistance,
+  formatMonthYear,
   weatherCodeToIcon,
 } from "@/lib/format";
 
@@ -55,5 +56,11 @@ describe("formatDistance", () => {
   it("defaults to km and rounds to the nearest whole unit", () => {
     expect(formatDistance(100)).toBe("100 km");
     expect(formatDistance(99.6)).toBe("100 km");
+  });
+});
+
+describe("formatMonthYear", () => {
+  it("formats a date as full month + year in UTC", () => {
+    expect(formatMonthYear(new Date("2025-06-01T00:30:00Z"))).toBe("June 2025");
   });
 });

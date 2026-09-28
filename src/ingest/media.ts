@@ -9,6 +9,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -19,6 +20,8 @@ import sharp from "sharp";
 const execFileAsync = promisify(execFile);
 
 const THUMB_WIDTH = 400;
+// Home cards and trip-selector tiles: ~450px wide on screen, sharp at 2x.
+const CARD_WIDTH = 800;
 const DISPLAY_WIDTH = 1600;
 
 interface MediaDerivative {
@@ -37,6 +40,72 @@ type CachedMeta = Omit<MediaDerivative, "hash">;
 
 function hashFile(buf: Buffer): string {
   return createHash("sha1").update(buf).digest("hex").slice(0, 20);
+}
+
+function derivativePaths(cacheDir: string, hash: string) {
+  const path = (suffix: string) => join(cacheDir, `${hash}-${suffix}`);
+  return {
+    thumb: path("thumb.jpg"),
+    card: path("card.jpg"),
+    display: path("display.jpg"),
+    video: path("video.mp4"),
+    meta: path("meta.json"),
+  };
+}
+
+// Source file -> content hash, per cache dir (sources.json), keyed by the
+// file's path, size and mtime — so re-ingesting an unchanged photo doesn't
+// read the whole original just to hash it before finding it's cached.
+const sourceIndexes = new Map<string, Promise<Record<string, string>>>();
+
+function sourceIndex(cacheDir: string): Promise<Record<string, string>> {
+  let index = sourceIndexes.get(cacheDir);
+  if (!index) {
+    index = readFile(join(cacheDir, "sources.json"), "utf8")
+      .then((raw) => JSON.parse(raw) as Record<string, string>)
+      .catch(() => ({}));
+    sourceIndexes.set(cacheDir, index);
+  }
+  return index;
+}
+
+/** The source's content hash, plus its bytes when they had to be read. */
+async function hashSource(
+  absPath: string,
+  cacheDir: string,
+): Promise<{ hash: string; source?: Buffer }> {
+  const { size, mtimeMs } = await stat(absPath);
+  const key = `${absPath}|${size}|${mtimeMs}`;
+  const index = await sourceIndex(cacheDir);
+  const known = index[key];
+  if (known) return { hash: known };
+  const source = await readFile(absPath);
+  const hash = hashFile(source);
+  index[key] = hash;
+  return { hash, source };
+}
+
+/** Persists the hashes learned while processing a trip's media. */
+export async function saveSourceIndex(cacheDir: string): Promise<void> {
+  const index = await sourceIndexes.get(cacheDir);
+  if (index)
+    await writeFile(join(cacheDir, "sources.json"), JSON.stringify(index));
+}
+
+/** Card-size copy, made from the display JPEG — backfills caches written
+ * before the card size existed without redoing HEIC conversion. */
+async function ensureCard(
+  displayPath: string,
+  cardPath: string,
+): Promise<void> {
+  try {
+    await access(cardPath);
+  } catch {
+    await sharp(displayPath)
+      .resize({ width: CARD_WIDTH, withoutEnlargement: true })
+      .jpeg({ quality: 80, mozjpeg: true })
+      .toFile(cardPath);
+  }
 }
 
 /**
@@ -64,8 +133,8 @@ async function heicToJpegBuffer(absPath: string): Promise<Buffer> {
 
 const HEIC_EXT = new Set([".heic", ".heif"]);
 
-/** Resizes an already-decoded image buffer into `cacheDir/<hash>-thumb.jpg`
- * and `-display.jpg`, plus a tiny inline blur placeholder — shared by
+/** Resizes an already-decoded image buffer into `cacheDir/<hash>-thumb.jpg`,
+ * `-card.jpg` and `-display.jpg`, plus a tiny inline blur placeholder — shared by
  * processImage (the source photo itself) and processVideo (an extracted
  * poster frame). Doesn't write the `-meta.json` cache file itself, since
  * processVideo has an extra field (durationSec) to merge in first. */
@@ -74,23 +143,20 @@ async function writeResizedDerivatives(
   cacheDir: string,
   hash: string,
 ): Promise<CachedMeta> {
-  const displayPath = join(cacheDir, `${hash}-display.jpg`);
-  const thumbPath = join(cacheDir, `${hash}-thumb.jpg`);
-
+  const paths = derivativePaths(cacheDir, hash);
   const image = sharp(decodable).rotate(); // rotate() bakes in EXIF orientation before we strip metadata
   const metadata = await image.metadata();
+  const resized = (width: number, quality: number, path: string) =>
+    image
+      .clone()
+      .resize({ width, withoutEnlargement: true })
+      .jpeg({ quality, mozjpeg: true })
+      .toFile(path);
 
-  const [, , placeholderBuf] = await Promise.all([
-    image
-      .clone()
-      .resize({ width: DISPLAY_WIDTH, withoutEnlargement: true })
-      .jpeg({ quality: 82, mozjpeg: true })
-      .toFile(displayPath),
-    image
-      .clone()
-      .resize({ width: THUMB_WIDTH, withoutEnlargement: true })
-      .jpeg({ quality: 75, mozjpeg: true })
-      .toFile(thumbPath),
+  const [, , , placeholderBuf] = await Promise.all([
+    resized(DISPLAY_WIDTH, 82, paths.display),
+    resized(CARD_WIDTH, 80, paths.card),
+    resized(THUMB_WIDTH, 75, paths.thumb),
     image
       .clone()
       .resize({ width: 24 })
@@ -120,24 +186,23 @@ export async function processImage(
   absPath: string,
   cacheDir: string,
 ): Promise<MediaDerivative> {
-  const source = await readFile(absPath);
-  const hash = hashFile(source);
   await mkdir(cacheDir, { recursive: true });
+  const { hash, source } = await hashSource(absPath, cacheDir);
+  const paths = derivativePaths(cacheDir, hash);
 
-  const displayPath = join(cacheDir, `${hash}-display.jpg`);
-  const thumbPath = join(cacheDir, `${hash}-thumb.jpg`);
-  const metaPath = join(cacheDir, `${hash}-meta.json`);
-
-  const cached = await readCachedMeta(metaPath, [displayPath, thumbPath]);
-  if (cached) return { hash, ...cached };
+  const cached = await readCachedMeta(paths.meta, [paths.display, paths.thumb]);
+  if (cached) {
+    await ensureCard(paths.display, paths.card);
+    return { hash, ...cached };
+  }
 
   const ext = extname(absPath).toLowerCase();
   const decodable = HEIC_EXT.has(ext)
     ? await heicToJpegBuffer(absPath)
-    : source;
+    : (source ?? (await readFile(absPath)));
 
   const meta = await writeResizedDerivatives(decodable, cacheDir, hash);
-  await writeFile(metaPath, JSON.stringify(meta));
+  await writeFile(paths.meta, JSON.stringify(meta));
 
   return { hash, ...meta };
 }
@@ -153,33 +218,31 @@ export async function processVideo(
   absPath: string,
   cacheDir: string,
 ): Promise<MediaDerivative> {
-  const source = await readFile(absPath);
-  const hash = hashFile(source);
   await mkdir(cacheDir, { recursive: true });
+  const { hash } = await hashSource(absPath, cacheDir);
+  const paths = derivativePaths(cacheDir, hash);
 
-  const videoPath = join(cacheDir, `${hash}-video.mp4`);
-  const displayPath = join(cacheDir, `${hash}-display.jpg`);
-  const thumbPath = join(cacheDir, `${hash}-thumb.jpg`);
-  const metaPath = join(cacheDir, `${hash}-meta.json`);
-
-  const cached = await readCachedMeta(metaPath, [
-    videoPath,
-    displayPath,
-    thumbPath,
+  const cached = await readCachedMeta(paths.meta, [
+    paths.video,
+    paths.display,
+    paths.thumb,
   ]);
-  if (cached) return { hash, ...cached };
+  if (cached) {
+    await ensureCard(paths.display, paths.card);
+    return { hash, ...cached };
+  }
 
   const [, posterBuf] = await Promise.all([
-    transcodeVideo(absPath, videoPath),
+    transcodeVideo(absPath, paths.video),
     extractPosterFrame(absPath),
   ]);
-  const durationSec = await probeDurationSec(videoPath);
+  const durationSec = await probeDurationSec(paths.video);
 
   const meta: CachedMeta = {
     ...(await writeResizedDerivatives(posterBuf, cacheDir, hash)),
     durationSec,
   };
-  await writeFile(metaPath, JSON.stringify(meta));
+  await writeFile(paths.meta, JSON.stringify(meta));
 
   return { hash, ...meta };
 }

@@ -1,18 +1,13 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { mediaUrl } from "@/lib/media-url";
 import { loadProfile } from "@/lib/profile";
-import {
-  countryCodeToFlagEmoji,
-  formatBookendDate,
-  formatDayMonth,
-  formatDistance,
-  weatherCodeToIcon,
-} from "@/lib/format";
-import { dayNumber, tripDurationDays, uniqueCityCount } from "@/lib/stats";
-import { countryByAlpha2 } from "@/lib/countries";
-import type { StepView, TripView } from "@/lib/trip-view";
-import TripView_ from "@/components/TripView";
+import { resolveCoverHashes } from "@/lib/trip-cover";
+import { formatDistance, formatMonthYear } from "@/lib/format";
+import { tripDurationDays } from "@/lib/stats";
+import { zoomName } from "@/lib/page-transition";
+import type { TripSelectorData } from "@/lib/trip-view";
+import TripSelector from "@/components/TripSelector";
 
 export const revalidate = 300; // content only changes on ingest, not per-request
 
@@ -20,108 +15,71 @@ interface PageProps {
   params: Promise<{ slug: string }>;
 }
 
-export default async function TripPage({ params }: PageProps) {
+// Prerendered for the same reason as the trip page — see [n]/page.tsx.
+export async function generateStaticParams() {
+  const trips = await prisma.trip.findMany({
+    distinct: ["slug"],
+    select: { slug: true },
+  });
+  return trips.map((t) => ({ slug: t.slug }));
+}
+
+/** One folder under assets/ — a tile per trip when it holds several, or
+ * straight through to the trip page when it holds just one (which also
+ * keeps pre-multi-trip /m/<slug> links and NFC tags working). */
+export default async function TripSelectorPage({ params }: PageProps) {
   const { slug } = await params;
 
-  // Trip and track points don't depend on each other — fetched in parallel
-  // via the slug relation rather than waiting for `trip.id` first. `select`
-  // (not `include`) also drops columns the page never reads (sourcePath,
-  // width/height, takenAt/lat/lng on Media — the client gets a step's own
-  // lat/lng, not each photo's).
-  const [profile, trip, trackPoints] = await Promise.all([
+  const [profile, trips] = await Promise.all([
     loadProfile(),
-    prisma.trip.findUnique({
+    prisma.trip.findMany({
       where: { slug },
+      orderBy: { number: "asc" },
       select: {
+        number: true,
         title: true,
         startDate: true,
         endDate: true,
         distanceKm: true,
-        countryCodes: true,
+        coverMediaId: true,
         steps: {
           orderBy: { order: "asc" },
+          take: 1,
           select: {
-            id: true,
-            title: true,
-            locationName: true,
-            countryCode: true,
-            lat: true,
-            lng: true,
-            arrivedAt: true,
-            transportMode: true,
-            journalText: true,
-            weatherTempF: true,
-            weatherCode: true,
             media: {
               orderBy: { order: "asc" },
-              select: {
-                hash: true,
-                placeholder: true,
-                type: true,
-                durationSec: true,
-              },
+              take: 1,
+              select: { hash: true },
             },
           },
         },
       },
     }),
-    prisma.trackPoint.findMany({
-      where: { trip: { slug } },
-      orderBy: { t: "asc" },
-      select: { t: true, lat: true, lng: true },
-    }),
   ]);
 
-  if (!trip) notFound();
+  if (trips.length === 0) notFound();
+  // Not always 1: a trip with no placeable photos is skipped at ingest
+  // without renumbering the others.
+  if (trips.length === 1) redirect(`/m/${slug}/${trips[0]!.number}`);
 
-  const countryCodes = JSON.parse(trip.countryCodes) as string[];
-  const durationDays = tripDurationDays(trip.startDate, trip.endDate);
+  const coverHashes = await resolveCoverHashes(trips);
 
-  const steps: StepView[] = trip.steps.map((step) => {
-    return {
-      id: step.id,
-      dayNumber: dayNumber(step.arrivedAt, trip.startDate),
-      title: step.title,
-      locationName: step.locationName,
-      countryCode: step.countryCode,
-      countryName: countryByAlpha2(step.countryCode)?.name ?? "",
-      flag: countryCodeToFlagEmoji(step.countryCode),
-      dateLabel: formatDayMonth(step.arrivedAt),
-      weatherIcon: weatherCodeToIcon(step.weatherCode),
-      weatherTempF: step.weatherTempF,
-      lat: step.lat,
-      lng: step.lng,
-      arrivedAtISO: step.arrivedAt.toISOString(),
-      transportMode: step.transportMode,
-      journalText: step.journalText,
-      media: step.media.map((m) => ({
-        hash: m.hash,
-        type: m.type as "IMAGE" | "VIDEO",
-        thumbUrl: mediaUrl(slug, m.hash, "thumb"),
-        displayUrl: mediaUrl(slug, m.hash, "display"),
-        videoUrl: m.type === "VIDEO" ? mediaUrl(slug, m.hash, "video") : null,
-        durationSec: m.durationSec,
-        placeholder: m.placeholder,
-      })),
-    };
-  });
-
-  const cityCount = uniqueCityCount(steps);
-
-  const view: TripView = {
-    title: trip.title,
+  const data: TripSelectorData = {
+    title: trips[0]!.title,
+    path: `/m/${slug}`,
     owner: { name: profile.name, avatarUrl: profile.avatar },
-    flags: countryCodes.map(countryCodeToFlagEmoji),
-    statsLabel: `${durationDays} day${durationDays === 1 ? "" : "s"} · ${cityCount} ${cityCount === 1 ? "city" : "cities"} · ${formatDistance(trip.distanceKm)}`,
-    startDateLabel: formatBookendDate(trip.startDate),
-    endDateLabel: formatBookendDate(trip.endDate),
-    steps,
-    trackPoints: trackPoints.map((p) => ({
-      tISO: p.t.toISOString(),
-      lat: p.lat,
-      lng: p.lng,
-    })),
+    tiles: trips.map((trip) => {
+      const coverHash = coverHashes.get(trip);
+      const days = tripDurationDays(trip.startDate, trip.endDate);
+      return {
+        href: `/m/${slug}/${trip.number}`,
+        zoomName: zoomName(slug, trip.number),
+        coverUrl: coverHash ? mediaUrl(slug, coverHash, "card") : null,
+        title: formatMonthYear(trip.startDate),
+        subtitleLabel: `${days} DAY${days === 1 ? "" : "S"} · ${formatDistance(trip.distanceKm)}`,
+      };
+    }),
   };
 
-  return <TripView_ trip={view} />;
+  return <TripSelector data={data} />;
 }

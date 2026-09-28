@@ -164,10 +164,6 @@ body {
   object-fit: cover;
 }
 
-.maplibregl-ctrl-attrib {
-  font-size: 10px !important;
-}
-
 /* Story view photo progress bar (components/StepStory.tsx) — a CSS
    animation instead of a rAF-driven React state update, so the ~5s fill
    doesn't re-render the whole story at 60fps. */
@@ -177,5 +173,167 @@ body {
   }
   to {
     width: 100%;
+  }
+}
+
+/* Home sheet arriving via client-side navigation: skip vaul's slide-up
+   entrance so it's already in place (see HomeView.tsx). vaul only applies
+   its snap offset (--snap-point-height, already set on mount) a frame
+   later — too late for a page transition, which pauses frames while the
+   next page renders — so it's applied here directly. */
+.sheet-instant[data-vaul-drawer] {
+  transition: none !important;
+  animation: none !important;
+  transform: translate3d(0, var(--snap-point-height, 0), 0) !important;
+}
+
+/* Page transitions (see src/lib/page-transition.ts), modelled on iOS:
+   push/pop for moving through the hierarchy, zoom for opening a trip from
+   its tile. One curve and duration throughout — iOS's own navigation
+   spring, approximated. */
+:root {
+  --nav-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --nav-ms: 450ms;
+}
+::view-transition-group(*),
+::view-transition-image-pair(*),
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation-duration: var(--nav-ms);
+  animation-timing-function: var(--nav-ease);
+}
+/* Snapshots cover each other outright — the browser's default additive
+   blend (meant for cross-fading one element with itself) would wash out
+   two different pages overlapping mid-slide. */
+::view-transition-old(*),
+::view-transition-new(*) {
+  mix-blend-mode: normal;
+}
+
+/* Push: new page slides in from the right over the old one, which drifts
+   a third of the way left and dims. Pop is the exact reverse, with the old
+   page on top. Every direction has its own keyframes rather than using
+   animation-direction: reverse, which would also run the easing curve
+   backwards (slow start instead of slow finish). */
+html[data-nav="push"]::view-transition-old(root) {
+  animation-name: nav-to-behind;
+}
+html[data-nav="push"]::view-transition-new(root) {
+  animation-name: nav-from-right;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
+}
+html[data-nav="pop"]::view-transition-old(root),
+html[data-nav="pop"]::view-transition-old(trip-hero) {
+  animation-name: nav-to-right;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
+  z-index: 1;
+}
+html[data-nav="pop"]::view-transition-new(root) {
+  animation-name: nav-from-behind;
+}
+@keyframes nav-from-right {
+  from {
+    transform: translateX(100%);
+  }
+}
+@keyframes nav-to-right {
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes nav-to-behind {
+  to {
+    transform: translateX(-30%);
+    filter: brightness(0.8);
+  }
+}
+@keyframes nav-from-behind {
+  from {
+    transform: translateX(-30%);
+    filter: brightness(0.8);
+  }
+}
+
+/* Zoom: the tile and the trip page share the `trip-hero` group, which
+   grows from the tile's box to the full screen (or back). Both snapshots
+   are cropped to that box rather than stretched; the tile shows first and
+   hands off to the page mid-flight (the reverse going back). The page
+   underneath stays put. */
+::view-transition-image-pair(trip-hero) {
+  overflow: hidden;
+}
+html[data-nav="zoom-in"]::view-transition-image-pair(trip-hero) {
+  animation-name: nav-corners-open;
+}
+html[data-nav="zoom-out"]::view-transition-image-pair(trip-hero) {
+  animation-name: nav-corners-close;
+}
+@keyframes nav-corners-open {
+  from {
+    border-radius: var(--nav-tile-radius, 24px);
+  }
+  to {
+    border-radius: 0;
+  }
+}
+@keyframes nav-corners-close {
+  from {
+    border-radius: 0;
+  }
+  to {
+    border-radius: var(--nav-tile-radius, 24px);
+  }
+}
+::view-transition-old(trip-hero),
+::view-transition-new(trip-hero) {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+html[data-nav="zoom-in"]::view-transition-old(trip-hero),
+html[data-nav="zoom-out"]::view-transition-old(trip-hero) {
+  animation-name: nav-hand-off-out;
+}
+html[data-nav="zoom-in"]::view-transition-new(trip-hero),
+html[data-nav="zoom-out"]::view-transition-new(trip-hero) {
+  animation-name: nav-hand-off-in;
+}
+@keyframes nav-hand-off-out {
+  0%,
+  30% {
+    opacity: 1;
+  }
+  70%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes nav-hand-off-in {
+  0%,
+  30% {
+    opacity: 0;
+  }
+  70%,
+  100% {
+    opacity: 1;
+  }
+}
+/* The page being zoomed from/into holds still; the other root snapshot is
+   only the empty background around the hero, so it's hidden. */
+html[data-nav="zoom-in"]::view-transition-old(root),
+html[data-nav="zoom-out"]::view-transition-new(root) {
+  animation: none;
+}
+html[data-nav="zoom-in"]::view-transition-new(root),
+html[data-nav="zoom-out"]::view-transition-old(root) {
+  animation: none;
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }

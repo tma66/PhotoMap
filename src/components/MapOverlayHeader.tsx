@@ -1,10 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { onPlainClick, navigateBack } from "@/lib/page-transition";
 import { BackChevronIcon } from "./icons";
 
 interface MapOverlayHeaderProps {
   title: string;
+  backHref: string;
   owner: { name: string; avatarUrl: string | null };
   flags: string[];
   statsLabel: string;
@@ -14,12 +17,14 @@ interface MapOverlayHeaderProps {
 
 export default function MapOverlayHeader({
   title,
+  backHref,
   owner,
   flags,
   statsLabel,
   mapStyleMode,
   onToggleMapStyleMode,
 }: MapOverlayHeaderProps) {
+  const router = useRouter();
   return (
     <div className="absolute top-0 inset-x-0 z-20 safe-top px-4 pointer-events-none">
       <div className="flex items-center justify-center gap-1.5 mb-1">
@@ -44,8 +49,13 @@ export default function MapOverlayHeader({
 
       <div className="relative flex items-center justify-center">
         <Link
-          href="/"
+          href={backHref}
           aria-label="Back"
+          onClick={(e) =>
+            onPlainClick(e, (el) =>
+              navigateBack(el, backHref, "zoom", router.push),
+            )
+          }
           className="absolute left-0 top-0 w-12 h-12 rounded-full map-icon-button flex items-center justify-center shadow-soft pointer-events-auto"
         >
           <BackChevronIcon size={28} color="#ffffff" />

@@ -7,7 +7,9 @@ interface MediaView {
   type: "IMAGE" | "VIDEO";
   thumbUrl: string;
   displayUrl: string;
-  placeholder: string;
+  /** Inline only for a step's cover (its carousel card); the rest arrive
+   * after the page does — see TripView.tsx. */
+  placeholder: string | null;
   /** Set only for type "VIDEO" — the playable derivative (thumb/display are
    * its poster frame, same as any other photo). */
   videoUrl: string | null;
@@ -35,6 +37,9 @@ export interface StepView {
 
 export interface TripView {
   title: string;
+  backHref: string; // "/" or, in a multi-trip folder, its selector page
+  path: string; // this page's own URL, "/m/EDC/2"
+  zoomName: string; // matches the tile that opens it — see page-transition.ts
   owner: { name: string; avatarUrl: string | null };
   flags: string[];
   statsLabel: string; // "28 days · 6 cities · 4,099 km"
@@ -42,4 +47,18 @@ export interface TripView {
   endDateLabel: string; // "SUN, AUG 23, 2026" — trip-finished bookend card
   steps: StepView[];
   trackPoints: { tISO: string; lat: number; lng: number }[];
+}
+
+/** The /m/<slug> page for a folder holding several trips — one tile each. */
+export interface TripSelectorData {
+  title: string; // folder's trip title, e.g. "EDC"
+  path: string; // this page's own URL, "/m/EDC"
+  owner: { name: string; avatarUrl: string | null };
+  tiles: {
+    href: string; // "/m/EDC/2"
+    zoomName: string; // matches the trip page it opens — see page-transition.ts
+    coverUrl: string | null;
+    title: string; // "May 2026"
+    subtitleLabel: string; // "8 DAYS · 17 km"
+  }[];
 }

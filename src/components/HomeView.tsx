@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Drawer } from "vaul";
 import type { HomeData } from "@/lib/home-view";
+import { navigateForward, onPlainClick } from "@/lib/page-transition";
 
 // maplibre-gl is a large library — loading it after the initial paint lets
 // the sheet/drawer become interactive first instead of waiting on it.
@@ -21,13 +22,51 @@ const PEEK_HEIGHT_PX = 380;
 const SNAP_PEEK = `${PEEK_HEIGHT_PX}px`;
 const SNAP_FULL = 1;
 
+// The sheet's position, tab and scroll as the visitor left home for a trip.
+// Module state, so it survives client-side navigation but not a reload (and
+// is always empty during server rendering/hydration): coming back lands on
+// the same spot, like iOS keeping the previous screen alive in the
+// navigation stack — which also keeps the trip's card on screen for the
+// zoom back into it (see src/lib/page-transition.ts).
+let savedSheet: {
+  snap: number | string | null;
+  tab: "trips" | "stats";
+  scrollTop: number;
+} | null = null;
+// False only for the very first render after a full page load.
+let hasRenderedBefore = false;
+
 export default function HomeView({ data }: { data: HomeData }) {
   const router = useRouter();
-  const [tab, setTab] = useState<"trips" | "stats">("trips");
-  const [snap, setSnap] = useState<number | string | null>(SNAP_PEEK);
+  const [tab, setTab] = useState<"trips" | "stats">(
+    () => savedSheet?.tab ?? "trips",
+  );
+  const [snap, setSnap] = useState<number | string | null>(
+    () => savedSheet?.snap ?? SNAP_PEEK,
+  );
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // vaul slides the sheet up from off-screen every time it mounts. Fine on
+  // a fresh page load, but arriving back at home from another page the
+  // sheet should already be in place (as iOS keeps the previous screen as
+  // it was) — otherwise the page transition captures home without its
+  // sheet, and the sheet then slides up after it. `sheet-instant` suppresses
+  // that entrance, and is dropped once settled so dragging still animates.
+  const [instantSheet, setInstantSheet] = useState(() => hasRenderedBefore);
+
+  useLayoutEffect(() => {
+    hasRenderedBefore = true;
+    if (savedSheet && scrollRef.current) {
+      scrollRef.current.scrollTop = savedSheet.scrollTop;
+    }
+    const timer = setTimeout(() => setInstantSheet(false), 600);
+    return () => clearTimeout(timer);
+  }, []);
 
   return (
-    <div className="relative h-[100dvh] overflow-hidden bg-[#04101c]">
+    <div
+      data-page="/"
+      className="relative h-[100dvh] overflow-hidden bg-[#04101c]"
+    >
       <GlobeMap
         steps={data.globeSteps}
         bottomInset={PEEK_HEIGHT_PX}
@@ -44,7 +83,9 @@ export default function HomeView({ data }: { data: HomeData }) {
         setActiveSnapPoint={setSnap}
       >
         <Drawer.Portal>
-          <Drawer.Content className="fixed bottom-0 inset-x-2 z-30 mx-auto max-w-[480px] bg-ps-bg/95 rounded-t-3xl h-full max-h-[92%] flex flex-col outline-none shadow-soft">
+          <Drawer.Content
+            className={`${instantSheet ? "sheet-instant " : ""}fixed bottom-0 inset-x-2 z-30 mx-auto max-w-[480px] bg-ps-bg/95 rounded-t-3xl h-full max-h-[92%] flex flex-col outline-none shadow-soft`}
+          >
             <Drawer.Title className="sr-only">Profile</Drawer.Title>
             <Drawer.Handle
               className="mt-2"
@@ -52,6 +93,7 @@ export default function HomeView({ data }: { data: HomeData }) {
             />
 
             <div
+              ref={scrollRef}
               className={`px-5 pt-3 pb-2 no-scrollbar ${
                 snap === SNAP_FULL ? "overflow-y-auto" : "overflow-hidden"
               }`}
@@ -117,7 +159,23 @@ export default function HomeView({ data }: { data: HomeData }) {
                   {data.tripCards.map((trip) => (
                     <Link
                       key={trip.slug}
-                      href={`/m/${trip.slug}`}
+                      href={trip.href}
+                      data-zoom-tile={trip.zoomName ?? undefined}
+                      onClick={(e) =>
+                        onPlainClick(e, (el) => {
+                          savedSheet = {
+                            snap,
+                            tab,
+                            scrollTop: scrollRef.current?.scrollTop ?? 0,
+                          };
+                          navigateForward(
+                            el,
+                            trip.href,
+                            trip.zoomName ? "zoom" : "push",
+                            router.push,
+                          );
+                        })
+                      }
                       className="relative rounded-2xl aspect-[16/10] block shadow-soft transition-transform active:scale-[0.98]"
                     >
                       {/* overflow-hidden lives on this inner wrapper, not
@@ -139,9 +197,11 @@ export default function HomeView({ data }: { data: HomeData }) {
                           <p className="text-white font-bold text-lg leading-tight">
                             {trip.title}
                           </p>
-                          <p className="text-white/80 text-[11px] font-medium mt-0.5">
-                            {trip.subtitleLabel}
-                          </p>
+                          {trip.subtitleLabel && (
+                            <p className="text-white/80 text-[11px] font-medium mt-0.5">
+                              {trip.subtitleLabel}
+                            </p>
+                          )}
                         </div>
                       </div>
                     </Link>
@@ -185,18 +245,21 @@ export default function HomeView({ data }: { data: HomeData }) {
                   </div>
 
                   <div className="grid grid-cols-3 gap-3 mt-5 text-sm">
-                    <div className="bg-white rounded-xl p-3 shadow-soft">
-                      <p className="text-ps-muted-2 text-xs">Distance</p>
-                      <p className="font-bold">{data.stats.totalKmLabel}</p>
-                    </div>
-                    <div className="bg-white rounded-xl p-3 shadow-soft">
-                      <p className="text-ps-muted-2 text-xs">Days</p>
-                      <p className="font-bold">{data.stats.totalDays}</p>
-                    </div>
-                    <div className="bg-white rounded-xl p-3 shadow-soft">
-                      <p className="text-ps-muted-2 text-xs">Cities</p>
-                      <p className="font-bold">{data.stats.totalCities}</p>
-                    </div>
+                    {(
+                      [
+                        ["Distance", data.stats.totalKmLabel],
+                        ["Days", data.stats.totalDays],
+                        ["Cities", data.stats.totalCities],
+                      ] as const
+                    ).map(([label, value]) => (
+                      <div
+                        key={label}
+                        className="bg-white rounded-xl p-3 shadow-soft"
+                      >
+                        <p className="text-ps-muted-2 text-xs">{label}</p>
+                        <p className="font-bold">{value}</p>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

@@ -6,7 +6,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import "./maplibre-worker";
 import { greatCircleArc, haversineKm } from "@/lib/geo";
 import type { HomeGlobeStep } from "@/lib/home-view";
-import { labelsSource, satelliteSource } from "@/lib/map-style";
+import { GLOBE_SKY, labelsSource, satelliteSource } from "@/lib/map-style";
 
 interface GlobeMapProps {
   steps: HomeGlobeStep[];
@@ -95,20 +95,8 @@ function darkStyle(): maplibregl.StyleSpecification {
         paint: { "raster-opacity": 0.9 },
       },
     ],
-    sky: {
-      "atmosphere-blend": [
-        "interpolate",
-        ["linear"],
-        ["zoom"],
-        0,
-        1,
-        5,
-        1,
-        7,
-        0,
-      ],
-    },
-  } as unknown as maplibregl.StyleSpecification;
+    sky: GLOBE_SKY,
+  };
 }
 
 export default function GlobeMap({
@@ -144,6 +132,7 @@ export default function GlobeMap({
       zoom,
       attributionControl: false,
       dragRotate: false,
+      refreshExpiredTiles: false, // see TripMap.tsx
     });
     // Padding isn't a constructor option — apply it via jumpTo so the globe
     // recenters within the space above the peeked drawer, not the full

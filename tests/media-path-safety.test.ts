@@ -4,8 +4,11 @@ import { isSafeMediaRequest } from "@/lib/media-path-safety";
 const VALID_HASH = "0612bfd0f54277be5a24"; // 20 hex chars
 
 describe("isSafeMediaRequest", () => {
-  it("accepts a well-formed thumb/display/video request", () => {
+  it("accepts a well-formed thumb/card/display/video request", () => {
     expect(isSafeMediaRequest("japan-2025", `${VALID_HASH}-thumb.jpg`)).toBe(
+      true,
+    );
+    expect(isSafeMediaRequest("japan-2025", `${VALID_HASH}-card.jpg`)).toBe(
       true,
     );
     expect(isSafeMediaRequest("japan-2025", `${VALID_HASH}-display.jpg`)).toBe(

@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/db";
 import { mediaUrl } from "@/lib/media-url";
 import { loadProfile } from "@/lib/profile";
+import { resolveCoverHashes } from "@/lib/trip-cover";
+import { zoomName } from "@/lib/page-transition";
 import {
   percentOfWorldSeen,
   uniqueCityCount,
@@ -27,6 +29,7 @@ export default async function HomePage() {
       orderBy: { startDate: "desc" },
       select: {
         slug: true,
+        number: true,
         title: true,
         startDate: true,
         endDate: true,
@@ -51,34 +54,32 @@ export default async function HomePage() {
     }),
   ]);
 
-  // A trip's cover can be any photo in the trip (see trip.json's "cover" key
-  // in src/ingest/index.ts), not necessarily a step's first — so it's looked
-  // up separately rather than folded into the narrower per-step `take: 1`
-  // media query above.
-  const coverMediaIds = trips
-    .map((t) => t.coverMediaId)
-    .filter((id): id is string => id != null);
-  const coverHashById = new Map(
-    coverMediaIds.length > 0
-      ? (
-          await prisma.media.findMany({
-            where: { id: { in: coverMediaIds } },
-            select: { id: true, hash: true },
-          })
-        ).map((m) => [m.id, m.hash])
-      : [],
-  );
+  const coverHashes = await resolveCoverHashes(trips);
 
-  const tripCards: HomeTripCard[] = trips.map((trip) => {
-    const coverHash =
-      (trip.coverMediaId && coverHashById.get(trip.coverMediaId)) ||
-      trip.steps[0]?.media[0]?.hash;
-    const days = tripDurationDays(trip.startDate, trip.endDate);
+  // One card per assets/ folder. `trips` is newest first, so a folder's
+  // first trip seen is its latest — that orders the cards and supplies the
+  // cover. A folder holding several trips shows just its name and opens its
+  // trip selector (/m/<slug>) instead of a single trip page.
+  const tripsBySlug = new Map<string, typeof trips>();
+  for (const trip of trips) {
+    const folder = tripsBySlug.get(trip.slug);
+    if (folder) folder.push(trip);
+    else tripsBySlug.set(trip.slug, [trip]);
+  }
+  const tripCards: HomeTripCard[] = [...tripsBySlug].map(([slug, folder]) => {
+    const latest = folder[0]!;
+    const coverHash = coverHashes.get(latest);
+    const days = tripDurationDays(latest.startDate, latest.endDate);
+    const isMultiTrip = folder.length > 1;
     return {
-      slug: trip.slug,
-      title: trip.title,
-      coverUrl: coverHash ? mediaUrl(trip.slug, coverHash, "display") : null,
-      subtitleLabel: `${formatMonthYearCaps(trip.startDate)} · ${days} DAYS · ${formatDistance(trip.distanceKm)}`,
+      slug,
+      href: isMultiTrip ? `/m/${slug}` : `/m/${slug}/${latest.number}`,
+      zoomName: isMultiTrip ? null : zoomName(slug, latest.number),
+      title: latest.title,
+      coverUrl: coverHash ? mediaUrl(slug, coverHash, "card") : null,
+      subtitleLabel: isMultiTrip
+        ? null
+        : `${formatMonthYearCaps(latest.startDate)} · ${days} DAYS · ${formatDistance(latest.distanceKm)}`,
     };
   });
 
@@ -89,7 +90,7 @@ export default async function HomePage() {
         lat: s.lat,
         lng: s.lng,
         thumbUrl: mediaUrl(trip.slug, s.media[0]!.hash, "thumb"),
-        tripId: trip.slug,
+        tripId: `${trip.slug}/${trip.number}`,
         order: s.order,
       })),
   );

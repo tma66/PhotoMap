@@ -33,25 +33,40 @@ export function parseCoord(
 /** Keyed by the photo's own date ("YYYY-MM-DD"), not a day-since-start number. */
 export type PhotoOverridesByDay = Record<string, PhotoOverride[]>;
 
-/** Flattens the by-day grouping into a filename-keyed index once, so a
- * caller looking up many photos against the same overrides (every media
- * item in a trip) doesn't re-scan every entry on every lookup. */
-export function buildOverrideIndex(
-  overrides: PhotoOverridesByDay | undefined,
-): Map<string, PhotoOverride> {
-  const index = new Map<string, PhotoOverride>();
-  if (!overrides) return index;
-  for (const entries of Object.values(overrides)) {
-    for (const entry of entries) index.set(entry.file, entry);
-  }
-  return index;
+/** trip.json's whole "photos" block: flat by-day for a single-trip folder,
+ * or nested by trip number ("1", "3", ...) first when the folder holds
+ * trip subfolders (see listTrips in index.ts). */
+export type PhotosBlock =
+  | PhotoOverridesByDay
+  | Record<string, PhotoOverridesByDay>;
+
+/** The by-day maps inside a photos block — one for a flat block, one per
+ * trip for a nested one. */
+export function dayGroups(
+  block: PhotosBlock | undefined,
+): PhotoOverridesByDay[] {
+  if (!block) return [];
+  const values = Object.values(block);
+  return values.every((v) => Array.isArray(v))
+    ? [block as PhotoOverridesByDay]
+    : (values as PhotoOverridesByDay[]);
 }
 
-export function findOverride(
-  index: Map<string, PhotoOverride>,
-  filename: string,
-): PhotoOverride | undefined {
-  return index.get(filename);
+/** Every entry in a photos block (same object references, so callers can
+ * fill fields in place), whichever layout it uses. */
+export function allEntries(block: PhotosBlock | undefined): PhotoOverride[] {
+  return dayGroups(block).flatMap((byDay) => Object.values(byDay).flat());
+}
+
+/** Flattens the photos block into a filename-keyed index once, so a caller
+ * looking up many photos against the same overrides (every media item in a
+ * trip) doesn't re-scan every entry on every lookup. */
+export function buildOverrideIndex(
+  overrides: PhotosBlock | undefined,
+): Map<string, PhotoOverride> {
+  const index = new Map<string, PhotoOverride>();
+  for (const entry of allEntries(overrides)) index.set(entry.file, entry);
+  return index;
 }
 
 /**
@@ -71,15 +86,13 @@ export function findOverride(
  */
 export function buildPhotoTemplate(
   media: TaggedMedia[],
-  existing: PhotoOverridesByDay | undefined,
+  existing: PhotosBlock | undefined,
 ): PhotoOverridesByDay {
-  if (media.length === 0) return existing ?? {};
-
   const existingIndex = buildOverrideIndex(existing);
   const result: PhotoOverridesByDay = {};
   for (const m of media) {
     const filename = basename(m.sourcePath);
-    const prior = findOverride(existingIndex, filename);
+    const prior = existingIndex.get(filename);
     const key = m.takenAt.toISOString().slice(0, 10);
     const entry: PhotoOverride = prior
       ? { ...prior }

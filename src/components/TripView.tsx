@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type { MapStep, MapStyleMode } from "./TripMap";
 import MapOverlayHeader from "./MapOverlayHeader";
@@ -51,6 +51,38 @@ export default function TripView({ trip }: { trip: TripViewData }) {
     [trip.trackPoints],
   );
 
+  // Blur placeholders for every photo past each step's cover (which the page
+  // inlines), fetched once the page is up — only the story view shows them.
+  const [placeholders, setPlaceholders] = useState<Record<string, string>>();
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`${trip.path}/placeholders`, { signal: controller.signal })
+      .then((r) => (r.ok ? r.json() : undefined))
+      .then(setPlaceholders)
+      .catch(() => {});
+    return () => controller.abort();
+  }, [trip.path]);
+  const storySteps = useMemo(
+    () =>
+      placeholders
+        ? trip.steps.map((s) => ({
+            ...s,
+            media: s.media.map((m) => ({
+              ...m,
+              placeholder: m.placeholder ?? placeholders[m.hash] ?? null,
+            })),
+          }))
+        : trip.steps,
+    [trip.steps, placeholders],
+  );
+
+  // Stable, so the carousel doesn't re-attach its scroll listener on every
+  // render of this page.
+  const handleScrollProgress = useCallback(
+    (p: number) => scrubberRef.current?.setProgress(p),
+    [],
+  );
+
   const activeStepId = trip.steps[activeIndex]?.id ?? null;
 
   const handleSelectStepOnMap = (id: string) => {
@@ -59,18 +91,24 @@ export default function TripView({ trip }: { trip: TripViewData }) {
   };
 
   return (
-    <div className="relative h-[100dvh] overflow-hidden bg-ps-navy">
+    <div
+      data-page={trip.path}
+      data-zoom-page={trip.zoomName}
+      className="relative h-[100dvh] overflow-hidden bg-ps-navy"
+    >
       <TripMap
         steps={mapSteps}
         trackPoints={trackPoints}
         activeStepId={activeStepId}
         isScrubbing={isScrubbing}
+        hidden={storyOpen}
         styleMode={mapStyleMode}
         onSelectStep={handleSelectStepOnMap}
       />
 
       <MapOverlayHeader
         title={trip.title}
+        backHref={trip.backHref}
         owner={trip.owner}
         flags={trip.flags}
         statsLabel={trip.statsLabel}
@@ -98,7 +136,7 @@ export default function TripView({ trip }: { trip: TripViewData }) {
           activeIndex={activeIndex}
           isScrubbing={isScrubbing}
           onActiveChange={setActiveIndex}
-          onScrollProgress={(p) => scrubberRef.current?.setProgress(p)}
+          onScrollProgress={handleScrollProgress}
           onOpenStep={(i) => {
             const step = trip.steps[i];
             setStoryOriginRect(
@@ -114,7 +152,7 @@ export default function TripView({ trip }: { trip: TripViewData }) {
       {storyOpen && (
         <StepStory
           key={activeIndex}
-          steps={trip.steps}
+          steps={storySteps}
           stepIndex={activeIndex}
           initialMediaIndex={
             storyEnterAtEnd

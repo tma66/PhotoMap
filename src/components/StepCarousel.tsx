@@ -150,77 +150,75 @@ const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
     }, [activeIndex, isScrubbing, onActiveChange, onScrollProgress]);
 
     return (
-      <div>
-        <div
-          ref={scrollRef}
-          className="flex gap-3 overflow-x-auto no-scrollbar px-[9%] pb-1 snap-x snap-mandatory"
-        >
-          <BookendCard
-            icon="home"
-            label="Trip started"
-            dateLabel={startDateLabel}
-            flags={flags}
-          />
+      <div
+        ref={scrollRef}
+        className="flex gap-3 overflow-x-auto no-scrollbar px-[9%] pb-1 snap-x snap-mandatory"
+      >
+        <BookendCard
+          icon="home"
+          label="Trip started"
+          dateLabel={startDateLabel}
+          flags={flags}
+        />
 
-          {steps.map((step, i) => {
-            const cover = step.media[0];
+        {steps.map((step, i) => {
+          const cover = step.media[0];
 
-            return (
-              <button
-                key={step.id}
-                ref={(el) => {
-                  cardRefs.current[i] = el;
-                }}
-                type="button"
-                onClick={() => onOpenStep(i)}
-                className="relative shrink-0 w-[82%] aspect-[5/4] rounded-3xl snap-center text-left shadow-soft transition-transform active:scale-[0.98]"
-              >
-                {/* overflow-hidden lives on this inner wrapper, not the
+          return (
+            <button
+              key={step.id}
+              ref={(el) => {
+                cardRefs.current[i] = el;
+              }}
+              type="button"
+              onClick={() => onOpenStep(i)}
+              className="relative shrink-0 w-[82%] aspect-[5/4] rounded-3xl snap-center text-left shadow-soft transition-transform active:scale-[0.98]"
+            >
+              {/* overflow-hidden lives on this inner wrapper, not the
                   button itself — box-shadow on the same box as
                   overflow-hidden gets clipped away by the browser. */}
-                <div className="absolute inset-0 rounded-3xl overflow-hidden border border-white/15">
-                  {cover && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={cover.thumbUrl}
-                      alt=""
-                      loading="lazy"
-                      decoding="async"
-                      className="absolute inset-0 w-full h-full object-cover bg-cover"
-                      style={{ backgroundImage: `url(${cover.placeholder})` }}
-                    />
-                  )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+              <div className="absolute inset-0 rounded-3xl overflow-hidden border border-white/15">
+                {cover && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={cover.thumbUrl}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    className="absolute inset-0 w-full h-full object-cover bg-cover"
+                    style={{ backgroundImage: `url(${cover.placeholder})` }}
+                  />
+                )}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
 
-                  <span className="absolute top-2.5 left-2.5 w-7 h-7 rounded-full bg-white/90 shadow-soft flex items-center justify-center text-sm">
-                    {step.flag}
+                <span className="absolute top-2.5 left-2.5 w-7 h-7 rounded-full bg-white/90 shadow-soft flex items-center justify-center text-sm">
+                  {step.flag}
+                </span>
+                {step.media.length > 1 && (
+                  <span className="absolute top-2.5 right-2.5 bg-black/50 text-white text-[11px] font-semibold px-2 py-1 rounded-full">
+                    📷 {step.media.length}
                   </span>
-                  {step.media.length > 1 && (
-                    <span className="absolute top-2.5 right-2.5 bg-black/50 text-white text-[11px] font-semibold px-2 py-1 rounded-full">
-                      📷 {step.media.length}
-                    </span>
-                  )}
+                )}
 
-                  <div className="absolute bottom-3 left-3 right-3">
-                    <p className="text-white font-bold text-base leading-tight drop-shadow">
-                      {step.title}
-                    </p>
-                    <p className="text-white/85 text-xs mt-0.5">
-                      {step.countryName}
-                    </p>
-                  </div>
+                <div className="absolute bottom-3 left-3 right-3">
+                  <p className="text-white font-bold text-base leading-tight drop-shadow">
+                    {step.title}
+                  </p>
+                  <p className="text-white/85 text-xs mt-0.5">
+                    {step.countryName}
+                  </p>
                 </div>
-              </button>
-            );
-          })}
+              </div>
+            </button>
+          );
+        })}
 
-          <BookendCard
-            icon="flag"
-            label="Trip finished"
-            dateLabel={endDateLabel}
-            flags={flags}
-          />
-        </div>
+        <BookendCard
+          icon="flag"
+          label="Trip finished"
+          dateLabel={endDateLabel}
+          flags={flags}
+        />
       </div>
     );
   },
@@ -242,40 +240,28 @@ function BookendCard({
   return (
     <div className="relative shrink-0 w-[82%] aspect-[5/4] rounded-3xl snap-center border border-white/15 bg-ps-navy flex flex-col items-center justify-center text-center px-4 shadow-soft">
       <div className="w-11 h-11 rounded-full bg-white flex items-center justify-center">
-        {icon === "home" ? (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path
-              d="M3 11l9-8 9 8"
-              stroke="#00293D"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <path
-              d="M5 10v10h14V10"
-              stroke="#00293D"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        ) : (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path
-              d="M5 3v18"
-              stroke="#00293D"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-            />
-            <path
-              d="M5 4h13l-3 4 3 4H5"
-              stroke="#00293D"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        )}
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="#00293D"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          {icon === "home" ? (
+            <>
+              <path d="M3 11l9-8 9 8" />
+              <path d="M5 10v10h14V10" />
+            </>
+          ) : (
+            <>
+              <path d="M5 3v18" />
+              <path d="M5 4h13l-3 4 3 4H5" />
+            </>
+          )}
+        </svg>
       </div>
       <p className="text-white font-bold text-sm mt-2">{label}</p>
       <p className="text-white/70 text-xs mt-1">{dateLabel}</p>

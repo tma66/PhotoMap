@@ -2,7 +2,7 @@
 // Originals in ASSETS_DIR are never reachable through this route.
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
-import { Readable } from "node:stream";
+import type { ReadStream } from "node:fs";
 import { join, resolve } from "node:path";
 import { NextRequest } from "next/server";
 import { isSafeMediaRequest } from "@/lib/media-path-safety";
@@ -14,6 +14,44 @@ import { parseByteRange } from "@/lib/http-range";
 const CACHE_DIR = resolve(
   /* turbopackIgnore: true */ process.env.CACHE_DIR ?? "./data/cache",
 );
+
+/**
+ * A web stream over a file read stream that tolerates the client going away
+ * mid-download (a navigation cancelling an image, a video seek): the file
+ * stream is destroyed and any late chunk/end is dropped. Readable.toWeb
+ * instead throws "Controller is already closed" from inside Node's stream
+ * internals in that case — uncaught, which takes the whole server down.
+ * Pull-based, so a slow client still applies backpressure.
+ */
+function fileWebStream(file: ReadStream): ReadableStream<Uint8Array> {
+  let closed = false;
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      file.on("data", (chunk) => {
+        if (closed) return;
+        controller.enqueue(chunk as Buffer);
+        if ((controller.desiredSize ?? 1) <= 0) file.pause();
+      });
+      file.on("end", () => {
+        if (closed) return;
+        closed = true;
+        controller.close();
+      });
+      file.on("error", (err) => {
+        if (closed) return;
+        closed = true;
+        controller.error(err);
+      });
+    },
+    pull() {
+      file.resume();
+    },
+    cancel() {
+      closed = true;
+      file.destroy();
+    },
+  });
+}
 
 export async function GET(
   request: NextRequest,
@@ -49,7 +87,7 @@ export async function GET(
   if (range) {
     const { start, end } = range;
     const stream = createReadStream(absPath, { start, end });
-    return new Response(Readable.toWeb(stream) as ReadableStream, {
+    return new Response(fileWebStream(stream), {
       status: 206,
       headers: {
         ...baseHeaders,
@@ -60,7 +98,7 @@ export async function GET(
   }
 
   const stream = createReadStream(absPath);
-  return new Response(Readable.toWeb(stream) as ReadableStream, {
+  return new Response(fileWebStream(stream), {
     headers: { ...baseHeaders, "Content-Length": String(size) },
   });
 }

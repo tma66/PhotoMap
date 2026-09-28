@@ -4,8 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { StepView } from "@/lib/trip-view";
 import { BackChevronIcon, SpeakerIcon } from "./icons";
 
-const PHOTO_DURATION_MS = 5000;
-const PHOTO_DURATION_S = PHOTO_DURATION_MS / 1000;
+const PHOTO_DURATION_S = 5;
 const SETTLE_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
 // The settle/complete animation runs at roughly this speed rather than a
 // fixed duration, so it covers however much distance is actually left from
@@ -87,16 +86,34 @@ const CARD_BORDER_RADIUS = "24px";
 const ZOOM_TRANSITION_MS = 320;
 const ZOOM_EASE = "cubic-bezier(0.32, 0.72, 0.35, 1)";
 
-/** A transform (relative to `el`'s own full-screen rect) that visually
- * overlays `el` exactly onto `target` — used to animate between the
- * full-screen story and the card it opened from/closes to. */
-function transformOnto(el: HTMLElement, target: DOMRect): string {
+/** Keyframe (relative to `el`'s own full-screen rect) that visually
+ * overlays `el` exactly onto the card at `target` — used to animate between
+ * the full-screen story and the card it opened from/closes to. */
+function onCard(el: HTMLElement, target: DOMRect): Keyframe {
   const full = el.getBoundingClientRect();
   const tx = target.left - full.left;
   const ty = target.top - full.top;
   const sx = target.width / full.width;
   const sy = target.height / full.height;
-  return `translate(${tx}px, ${ty}px) scale(${sx}, ${sy})`;
+  return {
+    transform: `translate(${tx}px, ${ty}px) scale(${sx}, ${sy})`,
+    borderRadius: CARD_BORDER_RADIUS,
+  };
+}
+const FULL_SCREEN: Keyframe = {
+  transform: "translate(0px, 0px) scale(1, 1)",
+  borderRadius: "0px",
+};
+
+// fill: "forwards" holds the end state once the animation finishes —
+// without it, a close would snap back to full screen for a frame or two
+// before the parent actually unmounts the story.
+function zoom(el: HTMLElement, from: Keyframe, to: Keyframe): Animation {
+  return el.animate([from, to], {
+    duration: ZOOM_TRANSITION_MS,
+    easing: ZOOM_EASE,
+    fill: "forwards",
+  });
 }
 
 export default function StepStory({
@@ -166,22 +183,7 @@ export default function StepStory({
       onClose();
       return;
     }
-    const anim = el.animate(
-      [
-        { transform: "translate(0px, 0px) scale(1, 1)", borderRadius: "0px" },
-        {
-          transform: transformOnto(el, rect),
-          borderRadius: CARD_BORDER_RADIUS,
-        },
-      ],
-      // fill: "forwards" holds the shrunk-to-card end state once the
-      // animation finishes — without it, the instant it completes the
-      // element snaps back to its base (full-screen) style until the
-      // `finished` promise below actually unmounts it, flashing the full
-      // photo across the screen for a frame or two.
-      { duration: ZOOM_TRANSITION_MS, easing: ZOOM_EASE, fill: "forwards" },
-    );
-    anim.finished.then(onClose, onClose);
+    zoom(el, FULL_SCREEN, onCard(el, rect)).finished.then(onClose, onClose);
   };
 
   const goNext = () => {
@@ -228,16 +230,7 @@ export default function StepStory({
     onOriginConsumed?.();
     const el = containerRef.current;
     if (!el || prefersReducedMotion()) return;
-    el.animate(
-      [
-        {
-          transform: transformOnto(el, originRect),
-          borderRadius: CARD_BORDER_RADIUS,
-        },
-        { transform: "translate(0px, 0px) scale(1, 1)", borderRadius: "0px" },
-      ],
-      { duration: ZOOM_TRANSITION_MS, easing: ZOOM_EASE, fill: "forwards" },
-    );
+    zoom(el, onCard(el, originRect), FULL_SCREEN);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once on mount, for the rect this instance was created with
   }, []);
 
@@ -438,14 +431,7 @@ export default function StepStory({
             muted={videoMuted}
           />
         ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={media.displayUrl}
-            alt=""
-            decoding="async"
-            className="w-full h-full object-contain bg-black bg-contain bg-center bg-no-repeat"
-            style={{ backgroundImage: `url(${media.placeholder})` }}
-          />
+          <StoryPhoto media={media} />
         )}
       </div>
       <div
@@ -559,15 +545,27 @@ function VideoWithPoster({
 // photo instead of landing on an already-loaded frame.
 function StepCoverPreview({ step }: { step?: StepView }) {
   const cover = step?.media[0];
-  if (!step || !cover) return <div className="w-full h-full bg-black" />;
+  return cover ? (
+    <StoryPhoto media={cover} />
+  ) : (
+    <div className="w-full h-full bg-black" />
+  );
+}
+
+/** A full-screen photo over its blurred placeholder. */
+function StoryPhoto({ media }: { media: StepView["media"][number] }) {
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={cover.displayUrl}
+      src={media.displayUrl}
       alt=""
       decoding="async"
       className="w-full h-full object-contain bg-black bg-contain bg-center bg-no-repeat"
-      style={{ backgroundImage: `url(${cover.placeholder})` }}
+      style={
+        media.placeholder
+          ? { backgroundImage: `url(${media.placeholder})` }
+          : undefined
+      }
     />
   );
 }

@@ -18,14 +18,17 @@ export function formatDayMonth(date: Date): string {
   });
 }
 
+/** "June 2025" — trip selector tile titles. */
+export function formatMonthYear(date: Date): string {
+  return date.toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 export function formatMonthYearCaps(date: Date): string {
-  return date
-    .toLocaleDateString("en-US", {
-      month: "long",
-      year: "numeric",
-      timeZone: "UTC",
-    })
-    .toUpperCase();
+  return formatMonthYear(date).toUpperCase();
 }
 
 /** "SUN, AUG 16, 2026" — for the trip-started/trip-finished bookend cards. */

@@ -4,7 +4,10 @@
 // its source folder, so the DB is always a pure derivative of assets/. Never
 // touches the network itself — weather comes only from what's already cached
 // in trip.json's "photos" block (see --photos-template below); a trip with
-// no cached weather just has none, rather than fetching it live.
+// no cached weather just has none, rather than fetching it live. One folder
+// can hold several trips, one per numbered subfolder (assets/EDC/1/,
+// assets/EDC/3/ — the name is the trip's number and URL); a folder with just
+// photos in it is a single trip #1. See listTrips below.
 //
 // Usage:
 //   npm run ingest                              -- ingest every trip once
@@ -35,6 +38,7 @@ import "./env"; // must stay the first import — see env.ts
 import { readdir, stat, readFile, writeFile } from "node:fs/promises";
 import { basename, join, extname, relative } from "node:path";
 import chokidar from "chokidar";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/db";
 import { downsample } from "../lib/geo";
 import {
@@ -48,29 +52,52 @@ import { localizeInstant } from "./timezone";
 import { groupIntoSteps, inferTransportMode, type TaggedMedia } from "./steps";
 import { countryCodeForPoint, nearestPlaceName } from "./geocode";
 import {
+  allEntries,
   buildOverrideIndex,
   buildPhotoTemplate,
-  findOverride,
+  dayGroups,
   parseCoord,
-  type PhotoOverridesByDay,
+  type PhotosBlock,
 } from "./photo-overrides";
-import { processImage, processVideo } from "./media";
+import { processImage, processVideo, saveSourceIndex } from "./media";
 import { fetchHistoricalWeather } from "./weather";
 import { tripDistanceKm, uniqueCountryCodes } from "../lib/stats";
 
 const ASSETS_DIR = process.env.ASSETS_DIR ?? "./assets";
 const CACHE_DIR = process.env.CACHE_DIR ?? "./data/cache";
 const WEATHER_ENABLED = process.env.INGEST_WEATHER !== "off";
+const TRIP_DIR_NAME = /^[1-9]\d*$/; // a trip subfolder: "1", "3", ...
+
+// trip.json, .DS_Store, etc. aren't media.
+const isMediaFile = (name: string) =>
+  isImageExt(extname(name)) || isVideoExt(extname(name));
+
+const tripLabel = (slug: string, number: number, isMultiTrip: boolean) =>
+  isMultiTrip ? `${slug} #${number}` : slug;
 
 interface TripOverrides {
   title?: string;
   description?: string;
   cover?: string;
-  stepTitles?: Record<string, string>;
+  /** Keyed by step index — or, in a folder holding several trips, by trip
+   * number first: { "2": { "0": "Kyoto" } }. */
+  stepTitles?: Record<string, string | Record<string, string>>;
   /** Per-photo manual overrides for missing GPS/location/weather — see
    * src/ingest/photo-overrides.ts. Generate/update with
    * `npm run ingest -- --photos-template <slug>`. */
-  photos?: PhotoOverridesByDay;
+  photos?: PhotosBlock;
+}
+
+function stepTitleOverride(
+  stepTitles: TripOverrides["stepTitles"],
+  tripNumber: number,
+  isMultiTrip: boolean,
+  stepIndex: number,
+): string | undefined {
+  const scoped = isMultiTrip ? stepTitles?.[String(tripNumber)] : stepTitles;
+  if (!scoped || typeof scoped !== "object") return undefined;
+  const title = (scoped as Record<string, unknown>)[String(stepIndex)];
+  return typeof title === "string" ? title : undefined;
 }
 
 async function listTripSlugs(): Promise<string[]> {
@@ -79,6 +106,53 @@ async function listTripSlugs(): Promise<string[]> {
     .filter((e) => e.isDirectory() && !e.name.startsWith("."))
     .map((e) => e.name)
     .sort();
+}
+
+interface TripSource {
+  number: number;
+  dir: string;
+}
+
+/**
+ * The trips in one assets/ folder: one per positive-integer subfolder
+ * (`assets/EDC/3/` is trip 3), or — when there are none — the folder itself
+ * as trip 1. `isMultiTrip` (subfolder mode) also decides trip.json's layout:
+ * `photos`/`stepTitles` nested by trip number rather than flat.
+ */
+async function listTrips(
+  slug: string,
+): Promise<{ isMultiTrip: boolean; trips: TripSource[] }> {
+  const folder = join(ASSETS_DIR, slug);
+  const entries = await readdir(folder, { withFileTypes: true });
+  const subdirs = entries.filter(
+    (e) => e.isDirectory() && !e.name.startsWith("."),
+  );
+  const trips = subdirs
+    .filter((e) => TRIP_DIR_NAME.test(e.name))
+    .map((e) => ({ number: Number(e.name), dir: join(folder, e.name) }))
+    .sort((a, b) => a.number - b.number);
+
+  if (trips.length === 0) {
+    return { isMultiTrip: false, trips: [{ number: 1, dir: folder }] };
+  }
+
+  const otherDirs = subdirs
+    .filter((e) => !TRIP_DIR_NAME.test(e.name))
+    .map((e) => e.name);
+  if (otherDirs.length > 0) {
+    console.warn(
+      `[ingest] ${slug}: skipping subfolder(s) not named with a trip number: ${otherDirs.join(", ")}`,
+    );
+  }
+  const looseMedia = entries
+    .filter((e) => e.isFile() && isMediaFile(e.name))
+    .map((e) => e.name);
+  if (looseMedia.length > 0) {
+    console.warn(
+      `[ingest] ${slug}: skipping ${looseMedia.length} photo(s)/video(s) outside the trip subfolders: ${looseMedia.join(", ")}`,
+    );
+  }
+  return { isMultiTrip: true, trips };
 }
 
 function humanizeSlug(slug: string): string {
@@ -96,14 +170,10 @@ async function readTripOverrides(tripDir: string): Promise<TripOverrides> {
 
 async function loadTaggedMedia(
   tripDir: string,
-  photoOverrides: PhotoOverridesByDay | undefined,
+  photoOverrides: PhotosBlock | undefined,
 ): Promise<TaggedMedia[]> {
   const entries = await readdir(tripDir, { withFileTypes: true });
-  const files = entries.filter(
-    (e) =>
-      e.isFile() &&
-      (isImageExt(extname(e.name)) || isVideoExt(extname(e.name))), // trip.json, .DS_Store, etc. skipped
-  );
+  const files = entries.filter((e) => e.isFile() && isMediaFile(e.name));
 
   const media = await mapWithConcurrency(
     files,
@@ -126,8 +196,7 @@ async function loadTaggedMedia(
   // route rather than falling back to one shared trip-wide point.
   const overrideIndex = buildOverrideIndex(photoOverrides);
   for (const m of media) {
-    const override = findOverride(overrideIndex, basename(m.sourcePath));
-    const coord = parseCoord(override?.coord);
+    const coord = parseCoord(overrideIndex.get(basename(m.sourcePath))?.coord);
     if (coord) {
       m.lat = coord.lat;
       m.lng = coord.lng;
@@ -151,98 +220,119 @@ async function loadTaggedMedia(
   return media;
 }
 
+/** One folder can hold several trips (one per numbered subfolder — see
+ * listTrips); each becomes its own Trip row. */
 async function ingestTrip(slug: string): Promise<void> {
   const tripDir = join(ASSETS_DIR, slug);
   console.log(`[ingest] ${slug}: scanning...`);
 
   const overrides = await readTripOverrides(tripDir);
-  const media = await loadTaggedMedia(tripDir, overrides.photos);
+  const { isMultiTrip, trips } = await listTrips(slug);
 
-  if (media.length === 0) {
-    console.warn(`[ingest] ${slug}: no photos found, skipping`);
-    return;
+  const prepared: PreparedTrip[] = [];
+  for (const { number, dir } of trips) {
+    const media = await loadTaggedMedia(dir, overrides.photos);
+    if (media.length === 0) {
+      console.warn(
+        `[ingest] ${tripLabel(slug, number, isMultiTrip)}: no photos found, skipping`,
+      );
+      continue;
+    }
+    const trip = await prepareTrip(slug, number, isMultiTrip, media, overrides);
+    if (trip) prepared.push(trip);
   }
 
+  // Everything from here is DB-only — wrapped in one transaction so a
+  // failure partway through leaves the previous ingest of this folder intact
+  // instead of a half-wiped/half-written one.
+  await prisma.$transaction(
+    async (tx) => {
+      // Wipe and recreate this folder's rows — cascades to Step/Media/TrackPoint.
+      await tx.trip.deleteMany({ where: { slug } });
+      for (const trip of prepared) await writeTrip(tx, slug, overrides, trip);
+    },
+    { timeout: 30_000 },
+  ); // default 5s can be too short for a large trip's row count
+
+  for (const trip of prepared) {
+    console.log(
+      `[ingest] ${trip.label}: done (${trip.distanceKm} km, ${trip.countryCodes.length} countries)`,
+    );
+  }
+}
+
+type PreparedTrip = NonNullable<Awaited<ReturnType<typeof prepareTrip>>>;
+
+/** Everything for one trip that doesn't touch the DB: steps, stats, track
+ * and photo derivatives. Null when no step could be placed (no GPS at all). */
+async function prepareTrip(
+  slug: string,
+  number: number,
+  isMultiTrip: boolean,
+  media: TaggedMedia[],
+  overrides: TripOverrides,
+) {
+  const label = tripLabel(slug, number, isMultiTrip);
   const draftSteps = groupIntoSteps(media);
   console.log(
-    `[ingest] ${slug}: ${media.length} photos -> ${draftSteps.length} steps`,
+    `[ingest] ${label}: ${media.length} photos -> ${draftSteps.length} steps`,
   );
-
-  const stepInputs: {
-    order: number;
-    title: string;
-    locationName: string;
-    countryCode: string;
-    lat: number;
-    lng: number;
-    arrivedAt: Date;
-    journalText: string;
-    transportMode: string;
-    weatherTempF: number | null;
-    weatherCode: number | null;
-    mediaFiles: TaggedMedia[];
-  }[] = [];
+  if (draftSteps.length === 0) {
+    console.warn(
+      `[ingest] ${label}: no geotagged photos, skipping — fill in coords with --photos-template`,
+    );
+    return null;
+  }
 
   const overrideIndex = buildOverrideIndex(overrides.photos);
 
-  for (let i = 0; i < draftSteps.length; i++) {
-    const step = draftSteps[i]!;
+  const stepInputs = draftSteps.map((step, i) => {
     const prev = draftSteps[i - 1];
-
     const countryCode = countryCodeForPoint(step.centroid) ?? "";
     // Weather only ever comes from the photo overrides — cached once by
     // `npm run ingest -- --photos-template`, never fetched live here. Temp,
     // code and locationName can each be filled in on different photos within
-    // the same step, so they're sourced independently off this one lookup.
-    const stepPhotoOverrides = step.media.map((m) =>
-      findOverride(overrideIndex, basename(m.sourcePath)),
+    // the same step, so each is taken from the first photo that has it.
+    const photoOverrides = step.media.map((m) =>
+      overrideIndex.get(basename(m.sourcePath)),
     );
-    const photoLocationOverride = stepPhotoOverrides
-      .map((o) => o?.locationName)
-      .find((name): name is string => Boolean(name));
+    const first = <K extends "locationName" | "weatherTempF" | "weatherCode">(
+      key: K,
+    ) =>
+      photoOverrides.map((o) => o?.[key]).find((v) => v != null && v !== "") ??
+      null;
     const placeName =
-      photoLocationOverride ?? nearestPlaceName(step.centroid, countryCode);
-    const override = overrides.stepTitles?.[String(i)];
+      first("locationName") || nearestPlaceName(step.centroid, countryCode);
 
-    // Speed is estimated from the gap between the *last* photo of the
-    // departure step and the *first* photo of the arrival step — using
-    // `arrivedAt` (the departure step's own first photo) instead would
-    // count that entire day's local activity before ever leaving as transit
-    // time, deflating the implied speed enough to misclassify a real flight
-    // as ground transport.
-    const transportMode = prev
-      ? inferTransportMode(
-          prev.centroid,
-          step.centroid,
-          prev.media.at(-1)!.takenAt,
-          step.arrivedAt,
-        )
-      : "FOOT";
-
-    const weatherTempF =
-      stepPhotoOverrides
-        .map((o) => o?.weatherTempF)
-        .find((v): v is number => v != null) ?? null;
-    const weatherCode =
-      stepPhotoOverrides
-        .map((o) => o?.weatherCode)
-        .find((v): v is number => v != null) ?? null;
-
-    stepInputs.push({
+    return {
       order: i,
-      title: override ?? placeName,
+      title:
+        stepTitleOverride(overrides.stepTitles, number, isMultiTrip, i) ??
+        placeName,
       locationName: placeName,
       countryCode,
       lat: step.centroid.lat,
       lng: step.centroid.lng,
       arrivedAt: step.arrivedAt,
       journalText: step.captions.join("\n\n"),
-      transportMode,
-      weatherTempF,
-      weatherCode,
-      mediaFiles: step.media,
-    });
-  }
+      // Speed is estimated from the gap between the *last* photo of the
+      // departure step and the *first* photo of the arrival step — using
+      // `arrivedAt` (the departure step's own first photo) instead would
+      // count that entire day's local activity before ever leaving as
+      // transit time, deflating the implied speed enough to misclassify a
+      // real flight as ground transport.
+      transportMode: prev
+        ? inferTransportMode(
+            prev.centroid,
+            step.centroid,
+            prev.media.at(-1)!.takenAt,
+            step.arrivedAt,
+          )
+        : "FOOT",
+      weatherTempF: first("weatherTempF"),
+      weatherCode: first("weatherCode"),
+    };
+  });
 
   // Span of the photos themselves, not of step arrivals — the last step can
   // last several days after you arrive.
@@ -267,16 +357,14 @@ async function ingestTrip(slug: string): Promise<void> {
   // Flattened across steps (not processed step-by-step) so the concurrency
   // pool stays full even when steps have few files each.
   type MediaJob = { stepIndex: number; mediaIndex: number; m: TaggedMedia };
-  const jobs: MediaJob[] = stepInputs.flatMap((input, stepIndex) =>
-    input.mediaFiles.map((m, mediaIndex) => ({ stepIndex, mediaIndex, m })),
+  const jobs: MediaJob[] = draftSteps.flatMap((step, stepIndex) =>
+    step.media.map((m, mediaIndex) => ({ stepIndex, mediaIndex, m })),
   );
+  const cacheDir = join(CACHE_DIR, slug);
   const processed = await mapWithConcurrency(jobs, async (job) => {
     try {
       const deriveFn = job.m.kind === "video" ? processVideo : processImage;
-      const derivative = await deriveFn(
-        job.m.sourcePath,
-        join(CACHE_DIR, slug),
-      );
+      const derivative = await deriveFn(job.m.sourcePath, cacheDir);
       return { job, derivative };
     } catch (err) {
       console.warn(
@@ -286,87 +374,88 @@ async function ingestTrip(slug: string): Promise<void> {
       return { job, derivative: undefined };
     }
   });
+  await saveSourceIndex(cacheDir);
 
-  // Everything from here is DB-only — wrapped in one transaction so a
-  // failure partway through leaves the previous ingest of this trip intact
-  // instead of a half-wiped/half-written trip.
-  await prisma.$transaction(
-    async (tx) => {
-      // Wipe and recreate this trip's rows — cascades to Step/Media/TrackPoint.
-      await tx.trip.deleteMany({ where: { slug } });
+  return {
+    number,
+    label,
+    startDate,
+    endDate,
+    distanceKm,
+    countryCodes,
+    trackPoints,
+    stepInputs,
+    processed,
+  };
+}
 
-      const trip = await tx.trip.create({
-        data: {
-          slug,
-          title: overrides.title ?? humanizeSlug(slug),
-          description: overrides.description ?? "",
-          startDate,
-          endDate,
-          distanceKm,
-          countryCodes: JSON.stringify(countryCodes),
-        },
-      });
-
-      if (trackPoints.length > 0) {
-        await tx.trackPoint.createMany({
-          data: trackPoints.map((p) => ({ tripId: trip.id, ...p })),
-        });
-      }
-
-      const createdSteps = await Promise.all(
-        stepInputs.map((input) =>
-          tx.step.create({
-            data: {
-              tripId: trip.id,
-              order: input.order,
-              title: input.title,
-              locationName: input.locationName,
-              countryCode: input.countryCode,
-              lat: input.lat,
-              lng: input.lng,
-              arrivedAt: input.arrivedAt,
-              journalText: input.journalText,
-              transportMode: input.transportMode,
-              weatherTempF: input.weatherTempF,
-              weatherCode: input.weatherCode,
-            },
-          }),
-        ),
-      );
-
-      for (const { job, derivative } of processed) {
-        if (!derivative) continue;
-        const created = await tx.media.create({
-          data: {
-            stepId: createdSteps[job.stepIndex]!.id,
-            type: job.m.kind === "video" ? "VIDEO" : "IMAGE",
-            sourcePath: relative(process.cwd(), job.m.sourcePath),
-            hash: derivative.hash,
-            width: derivative.width,
-            height: derivative.height,
-            durationSec: derivative.durationSec ?? null,
-            takenAt: job.m.takenAt,
-            lat: job.m.lat ?? null,
-            lng: job.m.lng ?? null,
-            placeholder: derivative.placeholder,
-            order: job.mediaIndex,
-          },
-        });
-        // trip.json "cover": a filename in the trip folder, e.g. "IMG_0042.HEIC".
-        if (overrides.cover && basename(job.m.sourcePath) === overrides.cover) {
-          await tx.trip.update({
-            where: { id: trip.id },
-            data: { coverMediaId: created.id },
-          });
-        }
-      }
+async function writeTrip(
+  tx: Prisma.TransactionClient,
+  slug: string,
+  overrides: TripOverrides,
+  p: PreparedTrip,
+): Promise<void> {
+  const trip = await tx.trip.create({
+    data: {
+      slug,
+      number: p.number,
+      title: overrides.title ?? humanizeSlug(slug),
+      description: overrides.description ?? "",
+      startDate: p.startDate,
+      endDate: p.endDate,
+      distanceKm: p.distanceKm,
+      countryCodes: JSON.stringify(p.countryCodes),
     },
-    { timeout: 30_000 },
-  ); // default 5s can be too short for a large trip's row count
+  });
 
-  console.log(
-    `[ingest] ${slug}: done (${distanceKm} km, ${countryCodes.length} countries)`,
+  if (p.trackPoints.length > 0) {
+    await tx.trackPoint.createMany({
+      data: p.trackPoints.map((t) => ({ tripId: trip.id, ...t })),
+    });
+  }
+
+  // Batched inserts rather than a round trip per row.
+  const createdSteps = await tx.step.createManyAndReturn({
+    data: p.stepInputs.map((step) => ({ tripId: trip.id, ...step })),
+    select: { id: true, order: true },
+  });
+  const stepIdByOrder = new Map(createdSteps.map((s) => [s.order, s.id]));
+  const stepId = (job: { stepIndex: number }) =>
+    stepIdByOrder.get(job.stepIndex)!; // a step's order is its index
+
+  const stored = p.processed.filter((r) => r.derivative);
+  await tx.media.createMany({
+    data: stored.map(({ job, derivative }) => ({
+      stepId: stepId(job),
+      type: job.m.kind === "video" ? "VIDEO" : "IMAGE",
+      sourcePath: relative(process.cwd(), job.m.sourcePath),
+      hash: derivative!.hash,
+      width: derivative!.width,
+      height: derivative!.height,
+      durationSec: derivative!.durationSec ?? null,
+      takenAt: job.m.takenAt,
+      lat: job.m.lat ?? null,
+      lng: job.m.lng ?? null,
+      placeholder: derivative!.placeholder,
+      order: job.mediaIndex,
+    })),
+  });
+
+  // trip.json "cover": a filename in the trip folder, e.g. "IMG_0042.HEIC".
+  // In a multi-trip folder it only matches inside the trip holding that file.
+  const cover = stored.find(
+    ({ job }) => basename(job.m.sourcePath) === overrides.cover,
   );
+  if (cover) {
+    const media = await tx.media.findFirst({
+      where: { stepId: stepId(cover.job), order: cover.job.mediaIndex },
+      select: { id: true },
+    });
+    await tx.trip.update({
+      where: { id: trip.id },
+      data: { coverMediaId: media?.id },
+    });
+  }
 }
 
 /**
@@ -376,16 +465,16 @@ async function ingestTrip(slug: string): Promise<void> {
  * once instead of being re-fetched on every regular ingest.
  */
 async function fillWeatherOverrides(
-  photos: PhotoOverridesByDay,
+  photos: PhotosBlock,
   media: TaggedMedia[],
 ): Promise<void> {
   const takenAtByFile = new Map(
     media.map((m) => [basename(m.sourcePath), m.takenAt]),
   );
 
-  const needsWeather = Object.values(photos)
-    .flat()
-    .filter((entry) => entry.weatherTempF == null || entry.weatherCode == null);
+  const needsWeather = allEntries(photos).filter(
+    (entry) => entry.weatherTempF == null || entry.weatherCode == null,
+  );
 
   await mapWithConcurrency(needsWeather, async (entry) => {
     const coord = parseCoord(entry.coord);
@@ -405,28 +494,46 @@ async function writePhotoTemplate(slug: string): Promise<void> {
   const tripJsonPath = join(tripDir, "trip.json");
 
   const overrides = await readTripOverrides(tripDir);
-  const media = await loadTaggedMedia(tripDir, overrides.photos);
+  const { isMultiTrip, trips } = await listTrips(slug);
+  const mediaByTrip = await Promise.all(
+    trips.map(async (t) => ({
+      number: t.number,
+      media: await loadTaggedMedia(t.dir, overrides.photos),
+    })),
+  );
+  const media = mediaByTrip.flatMap((t) => t.media);
 
   if (media.length === 0) {
     console.warn(`[ingest] ${slug}: no photos found, nothing to template`);
     return;
   }
 
-  const photos = buildPhotoTemplate(media, overrides.photos);
+  // A folder with trip subfolders gets its photos nested by trip number
+  // first ({ "1": { "2025-05-16": [...] }, "3": ... }); a single trip keeps
+  // the flat by-day layout. Entries are matched by filename either way, so
+  // anything already filled in carries over when photos change trip.
+  const photos: PhotosBlock = isMultiTrip
+    ? Object.fromEntries(
+        mediaByTrip.map((t) => [
+          String(t.number),
+          buildPhotoTemplate(t.media, overrides.photos),
+        ]),
+      )
+    : buildPhotoTemplate(media, overrides.photos);
   if (WEATHER_ENABLED) {
     await fillWeatherOverrides(photos, media);
   }
   // Only a missing `coord` needs a human — locationName/weather are always
   // derivable once a coord (real or hand-typed) exists.
-  const needingInfo = Object.values(photos).reduce(
-    (n, entries) => n + entries.filter((e) => e.coord == null).length,
-    0,
-  );
+  const needingInfo = allEntries(photos).filter((e) => e.coord == null).length;
 
   const updated: TripOverrides = { ...overrides, photos };
   await writeFile(tripJsonPath, JSON.stringify(updated, null, 2) + "\n");
 
-  const days = Object.keys(photos).length;
+  const days = dayGroups(photos).reduce(
+    (n, byDay) => n + Object.keys(byDay).length,
+    0,
+  );
   console.log(
     `[ingest] ${slug}: ${needingInfo} photo(s) still need a coord, across ${days} day(s) — fill in "photos" in ${tripJsonPath}`,
   );
@@ -464,10 +571,7 @@ async function main(): Promise<void> {
 
   if (rebuild) {
     console.log("[ingest] --rebuild: wiping database");
-    await prisma.trackPoint.deleteMany();
-    await prisma.media.deleteMany();
-    await prisma.step.deleteMany();
-    await prisma.trip.deleteMany();
+    await prisma.trip.deleteMany(); // cascades to Step/Media/TrackPoint
   }
 
   await ingestAll(onlySlug);
