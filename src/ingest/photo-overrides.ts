@@ -1,10 +1,9 @@
 // Manual per-photo metadata, filled in by hand in trip.json under "photos"
 // when EXIF has no GPS/caption or the auto-fetched weather is wrong. Grouped
-// by the photo's own local date ("YYYY-MM-DD") purely for human readability
-// — lookups below match by filename regardless of which date key it's filed
-// under, and that key is recomputed (and the entry re-filed) on every
-// regeneration, since a coord filled in by hand can correct which local day
-// a photo actually falls on (see src/ingest/timezone.ts).
+// by date ("YYYY-MM-DD"). A new entry is filed under the photo's own local
+// date; after that, the date it's filed under is the photo's date — moving
+// an entry to another date by hand overrides a wrong one (e.g. a photo with
+// no EXIF date, which falls back to the file's own date). See filedDates.
 import { basename } from "node:path";
 import { countryCodeForPoint, nearestPlaceName } from "./geocode";
 import type { LatLng } from "../lib/geo";
@@ -69,49 +68,101 @@ export function buildOverrideIndex(
   return index;
 }
 
+/** The place name a coord resolves to (offline — see geocode.ts). */
+function placeNameFor(coord: LatLng): string {
+  return nearestPlaceName(coord, countryCodeForPoint(coord));
+}
+
 /**
- * Builds/updates the "photos" block of trip.json: one entry per photo,
- * (re)grouped by the photo's own local date. Only adds entries for photos
- * that don't have one yet, or drops ones for photos no longer on disk — an
- * existing entry's fields are never modified (beyond the one-time
- * locationName fill-in below; weather is filled in separately, by the
- * caller — see `index.ts`), matched purely by filename regardless of which
- * date key it was previously filed under. The date key itself, however, is
- * always recomputed from `m.takenAt` and the entry re-filed if it moved —
- * this is what lets filling in a `coord` (which can correct a photo's local
- * date via timezone lookup, see `index.ts`/`timezone.ts`) also fix which day
- * it's grouped under on the next run. A brand-new entry's `coord` is
- * pre-filled from real EXIF GPS when the photo has it — nothing left to
- * type in by hand for that one.
+ * Re-derives locationName (and, with `clearWeather`, blanks weather so the
+ * caller refetches it) for every entry whose coord changed since the last
+ * template run — `lastCoords` maps file -> coord as of then. An entry with
+ * no record yet counts as changed only if its locationName doesn't match its
+ * coord, so a name or weather typed in by hand survives while the coord it
+ * belongs to stays the same. Returns the files that were refreshed.
+ */
+export function refreshChangedCoords(
+  block: PhotosBlock,
+  lastCoords: Record<string, string>,
+  clearWeather: boolean,
+): string[] {
+  const refreshed: string[] = [];
+  for (const entry of allEntries(block)) {
+    const coord = parseCoord(entry.coord);
+    if (!coord) continue;
+    const name = placeNameFor(coord);
+    const last = lastCoords[entry.file];
+    const changed =
+      last !== undefined ? last !== entry.coord : entry.locationName !== name;
+    if (!changed) continue;
+    entry.locationName = name;
+    if (clearWeather) {
+      entry.weatherTempF = null;
+      entry.weatherCode = null;
+    }
+    refreshed.push(entry.file);
+  }
+  return refreshed;
+}
+
+const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** The date each photo is filed under in a photos block, by filename. */
+export function filedDates(
+  block: PhotosBlock | undefined,
+): Map<string, string> {
+  const dates = new Map<string, string>();
+  for (const byDay of dayGroups(block)) {
+    for (const [day, entries] of Object.entries(byDay)) {
+      if (!DATE_KEY.test(day)) continue;
+      for (const entry of entries) dates.set(entry.file, day);
+    }
+  }
+  return dates;
+}
+
+/**
+ * Builds/updates one trip's "photos" block of trip.json. Existing entries
+ * (matched by filename, wherever they were filed) stay exactly where they
+ * are — same date, same order — with only a missing locationName filled in
+ * below (refreshing names/weather after a coord change, and fetching
+ * weather, is the caller's job — see refreshChangedCoords and `index.ts`).
+ * Entries for photos no longer on disk are dropped, and each new photo gets
+ * an entry at the end of its own local date, its `coord` pre-filled from
+ * real EXIF GPS when it has it.
  */
 export function buildPhotoTemplate(
   media: TaggedMedia[],
   existing: PhotosBlock | undefined,
 ): PhotoOverridesByDay {
-  const existingIndex = buildOverrideIndex(existing);
+  const onDisk = new Map(media.map((m) => [basename(m.sourcePath), m]));
   const result: PhotoOverridesByDay = {};
-  for (const m of media) {
-    const filename = basename(m.sourcePath);
-    const prior = existingIndex.get(filename);
-    const key = m.takenAt.toISOString().slice(0, 10);
-    const entry: PhotoOverride = prior
-      ? { ...prior }
-      : {
-          file: filename,
-          coord: m.lat != null && m.lng != null ? `${m.lat},${m.lng}` : null,
-          locationName: null,
-          weatherTempF: null,
-          weatherCode: null,
-        };
-
+  const add = (day: string, entry: PhotoOverride) => {
     if (!entry.locationName) {
       const coord = parseCoord(entry.coord);
-      if (coord) {
-        const countryCode = countryCodeForPoint(coord);
-        entry.locationName = nearestPlaceName(coord, countryCode);
+      if (coord) entry.locationName = placeNameFor(coord);
+    }
+    (result[day] ??= []).push(entry);
+    onDisk.delete(entry.file);
+  };
+
+  for (const byDay of dayGroups(existing)) {
+    for (const [day, entries] of Object.entries(byDay)) {
+      for (const entry of entries) {
+        if (onDisk.has(entry.file)) add(day, { ...entry });
       }
     }
-    (result[key] ??= []).push(entry);
   }
-  return result;
+  for (const [file, m] of onDisk) {
+    add(m.takenAt.toISOString().slice(0, 10), {
+      file,
+      coord: m.lat != null && m.lng != null ? `${m.lat},${m.lng}` : null,
+      locationName: null,
+      weatherTempF: null,
+      weatherCode: null,
+    });
+  }
+  return Object.fromEntries(
+    Object.entries(result).sort(([a], [b]) => a.localeCompare(b)),
+  );
 }

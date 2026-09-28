@@ -35,7 +35,7 @@ process.on("unhandledRejection", (reason) => {
 });
 
 import "./env"; // must stay the first import — see env.ts
-import { readdir, stat, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, stat, readFile, writeFile } from "node:fs/promises";
 import { basename, join, extname, relative } from "node:path";
 import chokidar from "chokidar";
 import type { Prisma } from "@prisma/client";
@@ -56,16 +56,20 @@ import {
   buildOverrideIndex,
   buildPhotoTemplate,
   dayGroups,
+  filedDates,
   parseCoord,
+  refreshChangedCoords,
   type PhotosBlock,
 } from "./photo-overrides";
 import { processImage, processVideo, saveSourceIndex } from "./media";
+import { refreshSite } from "./site-refresh";
 import { fetchHistoricalWeather } from "./weather";
 import { tripDistanceKm, uniqueCountryCodes } from "../lib/stats";
 
 const ASSETS_DIR = process.env.ASSETS_DIR ?? "./assets";
 const CACHE_DIR = process.env.CACHE_DIR ?? "./data/cache";
 const WEATHER_ENABLED = process.env.INGEST_WEATHER !== "off";
+const DAY_MS = 86_400_000;
 const TRIP_DIR_NAME = /^[1-9]\d*$/; // a trip subfolder: "1", "3", ...
 
 // trip.json, .DS_Store, etc. aren't media.
@@ -213,6 +217,17 @@ async function loadTaggedMedia(
   for (const m of media) {
     if (m.takenAtIsExact && m.lat != null && m.lng != null) {
       m.takenAt = localizeInstant(m.takenAt, { lat: m.lat, lng: m.lng });
+    }
+  }
+
+  // The date a photo is filed under in trip.json is its date: moving an
+  // entry to another date there corrects a wrong one. The time of day is
+  // kept, so photos on that day still sort among each other.
+  const dates = filedDates(photoOverrides);
+  for (const m of media) {
+    const day = dates.get(basename(m.sourcePath));
+    if (day && day !== m.takenAt.toISOString().slice(0, 10)) {
+      m.takenAt = new Date(Date.parse(day) + (m.takenAt.getTime() % DAY_MS));
     }
   }
 
@@ -520,6 +535,20 @@ async function writePhotoTemplate(slug: string): Promise<void> {
         ]),
       )
     : buildPhotoTemplate(media, overrides.photos);
+
+  // Each photo's coord as of the last run, so a changed coord's place name
+  // and weather get re-derived (and nothing else is touched). Kept in the
+  // cache, not trip.json, which stays exactly as hand-edited.
+  const coordsPath = join(CACHE_DIR, slug, "template-coords.json");
+  const lastCoords = await readFile(coordsPath, "utf8")
+    .then((raw) => JSON.parse(raw) as Record<string, string>)
+    .catch(() => ({}) as Record<string, string>);
+  const refreshed = refreshChangedCoords(photos, lastCoords, WEATHER_ENABLED);
+  if (refreshed.length > 0) {
+    console.log(
+      `[ingest] ${slug}: coord changed, refreshing place/weather for ${refreshed.join(", ")}`,
+    );
+  }
   if (WEATHER_ENABLED) {
     await fillWeatherOverrides(photos, media);
   }
@@ -529,6 +558,20 @@ async function writePhotoTemplate(slug: string): Promise<void> {
 
   const updated: TripOverrides = { ...overrides, photos };
   await writeFile(tripJsonPath, JSON.stringify(updated, null, 2) + "\n");
+
+  // With weather off, a refreshed photo's weather is still the old coord's —
+  // leave it looking changed so a later run with weather on refetches it.
+  const pending = new Set(WEATHER_ENABLED ? [] : refreshed);
+  const coords = Object.fromEntries(
+    allEntries(photos)
+      .filter((e) => e.coord)
+      .map((e) => [
+        e.file,
+        pending.has(e.file) ? (lastCoords[e.file] ?? "") : e.coord!,
+      ]),
+  );
+  await mkdir(join(CACHE_DIR, slug), { recursive: true });
+  await writeFile(coordsPath, JSON.stringify(coords));
 
   const days = dayGroups(photos).reduce(
     (n, byDay) => n + Object.keys(byDay).length,
@@ -561,6 +604,7 @@ async function main(): Promise<void> {
       await writePhotoTemplate(s);
       await ingestTrip(s);
     }
+    await refreshSite();
     await prisma.$disconnect();
     return;
   }
@@ -575,6 +619,7 @@ async function main(): Promise<void> {
   }
 
   await ingestAll(onlySlug);
+  await refreshSite();
 
   if (watch) {
     console.log(`[ingest] watching ${ASSETS_DIR} for changes...`);
@@ -587,9 +632,9 @@ async function main(): Promise<void> {
         slug,
         setTimeout(() => {
           debounceTimers.delete(slug);
-          ingestTrip(slug).catch((err) =>
-            console.error(`[ingest] ${slug}: failed`, err),
-          );
+          ingestTrip(slug)
+            .then(refreshSite)
+            .catch((err) => console.error(`[ingest] ${slug}: failed`, err));
         }, 2000),
       );
     };

@@ -77,6 +77,11 @@ swallows the flag and runs a plain ingest instead. In a folder with trip
 subfolders, `photos` is grouped by subfolder number first
 (`{ "1": { "2025-05-16": [...] }, "3": { ... } }`). A trip with no
 geotagged photo at all is left off the site until you fill in a `coord`.
+Existing entries are never moved or reordered: to fix a photo's date (e.g.
+one with no EXIF date, which falls back to the file's date), move its entry
+under the right date and it's treated as taken that day. Change a `coord`
+and the next run re-derives that photo's `locationName` and weather; a name
+or weather you typed yourself is kept as long as its coord stays the same.
 
 ### Other overrides
 
@@ -138,6 +143,9 @@ about up front:
   `--photos-template` (weather is otherwise cached into `trip.json`, never
   fetched during a normal ingest).
 - `UNITS`: `km` or `mi`.
+- `SITE_URL`: where ingest reaches the running site to refresh its pages
+  right after an ingest (default `http://localhost:3000`). Pages are
+  otherwise built once and only change after an ingest or a rebuild.
 
 ## License
 

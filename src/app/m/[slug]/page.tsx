@@ -9,8 +9,6 @@ import { zoomName } from "@/lib/page-transition";
 import type { TripSelectorData } from "@/lib/trip-view";
 import TripSelector from "@/components/TripSelector";
 
-export const revalidate = 300; // content only changes on ingest, not per-request
-
 interface PageProps {
   params: Promise<{ slug: string }>;
 }

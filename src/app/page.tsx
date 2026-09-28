@@ -16,8 +16,6 @@ import {
 import HomeView from "@/components/HomeView";
 import type { HomeTripCard, HomeData } from "@/lib/home-view";
 
-export const revalidate = 300; // content only changes on ingest, not per-request
-
 export default async function HomePage() {
   const [profile, trips] = await Promise.all([
     loadProfile(),

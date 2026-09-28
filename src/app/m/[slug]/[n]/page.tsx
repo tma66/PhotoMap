@@ -15,8 +15,6 @@ import { zoomName } from "@/lib/page-transition";
 import type { StepView, TripView } from "@/lib/trip-view";
 import TripView_ from "@/components/TripView";
 
-export const revalidate = 300; // content only changes on ingest, not per-request
-
 interface PageProps {
   params: Promise<{ slug: string; n: string }>;
 }
