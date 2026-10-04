@@ -14,6 +14,12 @@ import { dayNumber, tripDurationDays, uniqueCityCount } from "@/lib/stats";
 import { countryByAlpha2 } from "@/lib/countries";
 import { zoomName } from "@/lib/page-transition";
 import type { StepView, TripView } from "@/lib/trip-view";
+import {
+  HEAVEN_BADGE,
+  HEAVEN_END_LABEL,
+  HEAVEN_SUBTITLE,
+  isHeaven,
+} from "@/lib/heaven";
 import TripView_ from "@/components/TripView";
 
 interface PageProps {
@@ -35,12 +41,12 @@ export default async function TripPage({ params }: PageProps) {
   if (!/^[1-9]\d*$/.test(n)) notFound();
   const number = Number(n);
 
-  // Trip, track points and the folder's trip count don't depend on each
+  // Trip and the folder's trip count don't depend on each
   // other — fetched in parallel via the slug relation rather than waiting
   // for `trip.id` first. `select` (not `include`) also drops columns the
   // page never reads (sourcePath, width/height, takenAt/lat/lng on Media —
   // the client gets a step's own lat/lng, not each photo's).
-  const [profile, trip, trackPoints, tripsInFolder] = await Promise.all([
+  const [profile, trip, tripsInFolder] = await Promise.all([
     loadProfile(),
     prisma.trip.findUnique({
       where: { slug_number: { slug, number } },
@@ -56,6 +62,7 @@ export default async function TripPage({ params }: PageProps) {
             id: true,
             title: true,
             locationName: true,
+            cityName: true,
             countryCode: true,
             lat: true,
             lng: true,
@@ -77,11 +84,6 @@ export default async function TripPage({ params }: PageProps) {
         },
       },
     }),
-    prisma.trackPoint.findMany({
-      where: { trip: { slug, number } },
-      orderBy: { t: "asc" },
-      select: { t: true, lat: true, lng: true },
-    }),
     prisma.trip.count({ where: { slug } }),
   ]);
 
@@ -91,20 +93,24 @@ export default async function TripPage({ params }: PageProps) {
   const durationDays = tripDurationDays(trip.startDate, trip.endDate);
 
   const steps: StepView[] = trip.steps.map((step) => {
+    const heaven = isHeaven(step); // see src/lib/heaven.ts
     return {
       id: step.id,
       dayNumber: dayNumber(step.arrivedAt, trip.startDate),
       title: step.title,
       locationName: step.locationName,
+      cityName: step.cityName,
       countryCode: step.countryCode,
-      countryName: countryByAlpha2(step.countryCode)?.name ?? "",
-      flag: countryCodeToFlagEmoji(step.countryCode),
+      countryName: heaven
+        ? HEAVEN_SUBTITLE
+        : (countryByAlpha2(step.countryCode)?.name ?? ""),
+      flag: heaven ? HEAVEN_BADGE : countryCodeToFlagEmoji(step.countryCode),
+      heaven,
       dateLabel: formatDayMonth(step.arrivedAt),
       weatherIcon: weatherCodeToIcon(step.weatherCode),
       weatherTempF: step.weatherTempF,
       lat: step.lat,
       lng: step.lng,
-      arrivedAtISO: step.arrivedAt.toISOString(),
       transportMode: step.transportMode,
       journalText: step.journalText,
       media: step.media.map((m, i) => ({
@@ -119,9 +125,11 @@ export default async function TripPage({ params }: PageProps) {
     };
   });
 
-  const cityCount = uniqueCityCount(steps);
+  const cityCount = uniqueCityCount(steps.filter((s) => !s.heaven));
 
   const isMultiTrip = tripsInFolder > 1;
+  const flags = countryCodes.map(countryCodeToFlagEmoji);
+  const endsInHeaven = steps.at(-1)?.heaven ?? false;
   const view: TripView = {
     // In a folder of several trips, the date tells them apart ("EDC May
     // 2024", matching its tile on the selector).
@@ -133,16 +141,18 @@ export default async function TripPage({ params }: PageProps) {
     path: `/m/${slug}/${number}`,
     zoomName: zoomName(slug, number),
     owner: { name: profile.name, avatarUrl: profile.avatar },
-    flags: countryCodes.map(countryCodeToFlagEmoji),
+    flags,
+    titleFlags: endsInHeaven ? [HEAVEN_BADGE] : flags,
     statsLabel: `${durationDays} day${durationDays === 1 ? "" : "s"} · ${cityCount} ${cityCount === 1 ? "city" : "cities"} · ${formatDistance(trip.distanceKm)}`,
     startDateLabel: formatBookendDate(trip.startDate),
-    endDateLabel: formatBookendDate(trip.endDate),
+    endCard: endsInHeaven
+      ? { label: HEAVEN_END_LABEL, dateLabel: null, flags: [HEAVEN_BADGE] }
+      : {
+          label: "Trip finished",
+          dateLabel: formatBookendDate(trip.endDate),
+          flags,
+        },
     steps,
-    trackPoints: trackPoints.map((p) => ({
-      tISO: p.t.toISOString(),
-      lat: p.lat,
-      lng: p.lng,
-    })),
   };
 
   return <TripView_ trip={view} />;

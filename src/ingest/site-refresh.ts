@@ -30,11 +30,14 @@ export async function refreshSite(): Promise<void> {
     ...new Set(trips.map((t) => `/m/${t.slug}`)),
     ...trips.map((t) => `/m/${t.slug}/${t.number}`),
   ];
+  // Each body is read to the end: that's when the page has finished
+  // rendering, and an unread body holds its connection (and with it this
+  // process) open for several seconds after ingest is done.
   await Promise.all(
     paths.map((p) =>
-      fetch(SITE_URL + p, { signal: AbortSignal.timeout(30_000) }).catch(
-        () => {},
-      ),
+      fetch(SITE_URL + p, { signal: AbortSignal.timeout(30_000) })
+        .then((r) => r.arrayBuffer())
+        .catch(() => {}),
     ),
   );
   console.log(`[ingest] site refreshed (${paths.length} pages)`);

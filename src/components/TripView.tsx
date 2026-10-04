@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import type { MapStep, MapStyleMode } from "./TripMap";
 import MapOverlayHeader from "./MapOverlayHeader";
 import StepCarousel, { type StepCarouselHandle } from "./StepCarousel";
@@ -12,6 +13,9 @@ import type { TripView as TripViewData } from "@/lib/trip-view";
 // maplibre-gl is a large library — loading it after the initial paint lets
 // the header/carousel become interactive first instead of waiting on it.
 const TripMap = dynamic(() => import("./TripMap"), { ssr: false });
+const LocationPicker = dynamic(() => import("./LocationPicker"), {
+  ssr: false,
+});
 
 export default function TripView({ trip }: { trip: TripViewData }) {
   const [activeIndex, setActiveIndex] = useState(0);
@@ -19,12 +23,15 @@ export default function TripView({ trip }: { trip: TripViewData }) {
   const [storyEnterAtEnd, setStoryEnterAtEnd] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [mapStyleMode, setMapStyleMode] = useState<MapStyleMode>("streets");
+  const [showRoute, setShowRoute] = useState(true);
   const [storyOriginRect, setStoryOriginRect] = useState<DOMRect | null>(null);
   const scrubberRef = useRef<TripScrubberHandle>(null);
   const carouselRef = useRef<StepCarouselHandle>(null);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const router = useRouter();
 
-  // Stable references across the 60fps re-renders `onScrollProgress` below
-  // drives — otherwise TripMap sees a "new" `steps`/`trackPoints` array every
+  // Stable reference across the 60fps re-renders `onScrollProgress` below
+  // drives — otherwise TripMap sees a "new" `steps` array every
   // frame and its fly-to-active-step effect (keyed on them) restarts
   // constantly while the carousel is just being scrolled.
   const mapSteps: MapStep[] = useMemo(
@@ -33,22 +40,23 @@ export default function TripView({ trip }: { trip: TripViewData }) {
         id: s.id,
         lat: s.lat,
         lng: s.lng,
-        arrivedAt: new Date(s.arrivedAtISO),
         transportMode: s.transportMode,
         locationName: s.locationName,
+        cityName: s.cityName,
         thumbUrl: s.media[0]?.thumbUrl ?? null,
       })),
     [trip.steps],
   );
 
-  const trackPoints = useMemo(
+  const mapKey = useMemo(
     () =>
-      trip.trackPoints.map((p) => ({
-        t: new Date(p.tISO),
-        lat: p.lat,
-        lng: p.lng,
-      })),
-    [trip.trackPoints],
+      mapSteps
+        .map(
+          (s) =>
+            `${s.id}@${s.lat},${s.lng}:${s.locationName}:${s.cityName}:${s.thumbUrl}`,
+        )
+        .join("|"),
+    [mapSteps],
   );
 
   // Blur placeholders for every photo past each step's cover (which the page
@@ -97,12 +105,15 @@ export default function TripView({ trip }: { trip: TripViewData }) {
       className="relative h-[100dvh] overflow-hidden bg-ps-navy"
     >
       <TripMap
+        // TripMap builds its pins and route once — remount it when a saved
+        // location change brings different pins.
+        key={mapKey}
         steps={mapSteps}
-        trackPoints={trackPoints}
         activeStepId={activeStepId}
         isScrubbing={isScrubbing}
         hidden={storyOpen}
         styleMode={mapStyleMode}
+        showRoute={showRoute}
         onSelectStep={handleSelectStepOnMap}
       />
 
@@ -110,12 +121,14 @@ export default function TripView({ trip }: { trip: TripViewData }) {
         title={trip.title}
         backHref={trip.backHref}
         owner={trip.owner}
-        flags={trip.flags}
+        flags={trip.titleFlags}
         statsLabel={trip.statsLabel}
         mapStyleMode={mapStyleMode}
         onToggleMapStyleMode={() =>
           setMapStyleMode((m) => (m === "satellite" ? "streets" : "satellite"))
         }
+        showRoute={showRoute}
+        onToggleRoute={() => setShowRoute((v) => !v)}
       />
 
       <div className="absolute bottom-0 inset-x-0 z-20 pt-3 safe-bottom">
@@ -132,11 +145,15 @@ export default function TripView({ trip }: { trip: TripViewData }) {
           steps={trip.steps}
           flags={trip.flags}
           startDateLabel={trip.startDateLabel}
-          endDateLabel={trip.endDateLabel}
+          endCard={trip.endCard}
           activeIndex={activeIndex}
           isScrubbing={isScrubbing}
           onActiveChange={setActiveIndex}
           onScrollProgress={handleScrollProgress}
+          onEditLocation={(i) => {
+            setActiveIndex(i);
+            setEditingIndex(i);
+          }}
           onOpenStep={(i) => {
             const step = trip.steps[i];
             setStoryOriginRect(
@@ -148,6 +165,19 @@ export default function TripView({ trip }: { trip: TripViewData }) {
           }}
         />
       </div>
+
+      {editingIndex != null && trip.steps[editingIndex] && (
+        <LocationPicker
+          step={trip.steps[editingIndex]}
+          photoCount={trip.steps[editingIndex].media.length}
+          styleMode={mapStyleMode}
+          onClose={() => setEditingIndex(null)}
+          onSaved={() => {
+            setEditingIndex(null);
+            router.refresh();
+          }}
+        />
+      )}
 
       {storyOpen && (
         <StepStory

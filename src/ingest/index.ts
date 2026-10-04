@@ -50,9 +50,10 @@ import {
 import { mapWithConcurrency } from "./concurrency";
 import { localizeInstant } from "./timezone";
 import { groupIntoSteps, inferTransportMode, type TaggedMedia } from "./steps";
-import { countryCodeForPoint, nearestPlaceName } from "./geocode";
+import { cityNameFor, countryCodeForPoint, nearestPlaceName } from "./geocode";
 import {
   allEntries,
+  namesFor,
   buildOverrideIndex,
   buildPhotoTemplate,
   dayGroups,
@@ -65,6 +66,7 @@ import { processImage, processVideo, saveSourceIndex } from "./media";
 import { refreshSite } from "./site-refresh";
 import { fetchHistoricalWeather } from "./weather";
 import { tripDistanceKm, uniqueCountryCodes } from "../lib/stats";
+import { HEAVEN_PLACE, heavenName, isHeaven } from "../lib/heaven";
 
 const ASSETS_DIR = process.env.ASSETS_DIR ?? "./assets";
 const CACHE_DIR = process.env.CACHE_DIR ?? "./data/cache";
@@ -300,10 +302,14 @@ async function prepareTrip(
   }
 
   const overrideIndex = buildOverrideIndex(overrides.photos);
+  const tripTitle = overrides.title ?? humanizeSlug(slug);
 
   const stepInputs = draftSteps.map((step, i) => {
     const prev = draftSteps[i - 1];
-    const countryCode = countryCodeForPoint(step.centroid) ?? "";
+    const heaven = isHeaven(step.centroid); // see src/lib/heaven.ts
+    const countryCode = heaven
+      ? ""
+      : (countryCodeForPoint(step.centroid) ?? "");
     // Weather only ever comes from the photo overrides — cached once by
     // `npm run ingest -- --photos-template`, never fetched live here. Temp,
     // code and locationName can each be filled in on different photos within
@@ -311,13 +317,16 @@ async function prepareTrip(
     const photoOverrides = step.media.map((m) =>
       overrideIndex.get(basename(m.sourcePath)),
     );
-    const first = <K extends "locationName" | "weatherTempF" | "weatherCode">(
+    const first = <
+      K extends "locationName" | "cityName" | "weatherTempF" | "weatherCode",
+    >(
       key: K,
     ) =>
       photoOverrides.map((o) => o?.[key]).find((v) => v != null && v !== "") ??
       null;
-    const placeName =
-      first("locationName") || nearestPlaceName(step.centroid, countryCode);
+    const placeName = heaven
+      ? heavenName(tripTitle)
+      : first("locationName") || nearestPlaceName(step.centroid, countryCode);
 
     return {
       order: i,
@@ -325,6 +334,9 @@ async function prepareTrip(
         stepTitleOverride(overrides.stepTitles, number, isMultiTrip, i) ??
         placeName,
       locationName: placeName,
+      cityName: heaven
+        ? HEAVEN_PLACE
+        : first("cityName") || cityNameFor(step.centroid, countryCode),
       countryCode,
       lat: step.centroid.lat,
       lng: step.centroid.lng,
@@ -344,8 +356,8 @@ async function prepareTrip(
             step.arrivedAt,
           )
         : "FOOT",
-      weatherTempF: first("weatherTempF"),
-      weatherCode: first("weatherCode"),
+      weatherTempF: heaven ? null : first("weatherTempF"),
+      weatherCode: heaven ? null : first("weatherCode"),
     };
   });
 
@@ -353,7 +365,7 @@ async function prepareTrip(
   // last several days after you arrive.
   const startDate = media[0]!.takenAt;
   const endDate = media.at(-1)!.takenAt;
-  const distanceKm = tripDistanceKm(stepInputs);
+  const distanceKm = tripDistanceKm(stepInputs.filter((s) => !isHeaven(s)));
   const countryCodes = uniqueCountryCodes(stepInputs);
 
   // Dense trail for the "actual travelled path" ground route, from every
@@ -391,6 +403,22 @@ async function prepareTrip(
   });
   await saveSourceIndex(cacheDir);
 
+  // Byte-identical copies (e.g. "IMG_1 (1).jpeg") share a content hash, which
+  // must be unique in the DB — keep the first, drop the rest.
+  const seenHashes = new Map<string, string>();
+  const unique = processed.filter(({ job, derivative }) => {
+    if (!derivative) return true;
+    const first = seenHashes.get(derivative.hash);
+    if (first) {
+      console.warn(
+        `[ingest] ${slug}: skipping ${basename(job.m.sourcePath)} (duplicate of ${first})`,
+      );
+      return false;
+    }
+    seenHashes.set(derivative.hash, basename(job.m.sourcePath));
+    return true;
+  });
+
   return {
     number,
     label,
@@ -400,7 +428,7 @@ async function prepareTrip(
     countryCodes,
     trackPoints,
     stepInputs,
-    processed,
+    processed: unique,
   };
 }
 
@@ -494,7 +522,7 @@ async function fillWeatherOverrides(
   await mapWithConcurrency(needsWeather, async (entry) => {
     const coord = parseCoord(entry.coord);
     const takenAt = takenAtByFile.get(entry.file);
-    if (!coord || !takenAt) return;
+    if (!coord || !takenAt || isHeaven(coord)) return;
 
     const weather = await fetchHistoricalWeather(coord.lat, coord.lng, takenAt);
     if (weather) {
@@ -582,6 +610,188 @@ async function writePhotoTemplate(slug: string): Promise<void> {
   );
 }
 
+/**
+ * What the trip page's "change location" picker saves (via
+ * /api/step-location): moves every photo in one step to `coord`. Only that
+ * step is looked at — its photos' trip.json entries get the new coord, place
+ * name and weather (the same values a --photos-template run would derive),
+ * and its DB rows are patched in place, without re-reading or re-geocoding
+ * the rest of the trip. If the move changes how photos group into steps
+ * (e.g. the new spot merges it into the same day's previous step), the whole
+ * trip is re-ingested instead, so the result always matches a full ingest.
+ */
+async function moveStep(stepId: string, coord: string): Promise<void> {
+  const point = parseCoord(coord);
+  if (!point || Math.abs(point.lat) > 90 || Math.abs(point.lng) > 180) {
+    throw new Error(`invalid coord "${coord}"`);
+  }
+  const target = await prisma.step.findUnique({
+    where: { id: stepId },
+    select: { tripId: true },
+  });
+  if (!target) throw new Error(`no step ${stepId}`);
+  const trip = await prisma.trip.findUniqueOrThrow({
+    where: { id: target.tripId },
+    select: {
+      id: true,
+      slug: true,
+      number: true,
+      title: true,
+      steps: {
+        orderBy: { order: "asc" },
+        select: {
+          id: true,
+          lat: true,
+          lng: true,
+          countryCode: true,
+          media: {
+            orderBy: { order: "asc" },
+            select: {
+              id: true,
+              sourcePath: true,
+              type: true,
+              takenAt: true,
+              lat: true,
+              lng: true,
+            },
+          },
+        },
+      },
+    },
+  });
+  const { slug } = trip;
+  const k = trip.steps.findIndex((st) => st.id === stepId);
+  const moved = trip.steps[k]!.media;
+  const files = moved.map((m) => basename(m.sourcePath));
+
+  // trip.json: the step's entries only. A photo with no entry yet needs a
+  // template run first, so it's filed under the right date.
+  const tripDir = join(ASSETS_DIR, slug);
+  let overrides = await readTripOverrides(tripDir);
+  if (files.some((f) => !buildOverrideIndex(overrides.photos).has(f))) {
+    await writePhotoTemplate(slug);
+    overrides = await readTripOverrides(tripDir);
+  }
+  const index = buildOverrideIndex(overrides.photos);
+  const entries = files.flatMap((f) => index.get(f) ?? []);
+  const names = namesFor(point);
+  for (const entry of entries) {
+    entry.coord = coord;
+    Object.assign(entry, names);
+    entry.weatherTempF = null;
+    entry.weatherCode = null;
+  }
+  // Same media shape the template works from; DB values are already final
+  // (filed dates and timezone applied at ingest).
+  const allMedia: TaggedMedia[] = trip.steps.flatMap((st, i) =>
+    st.media.map((m) => ({
+      sourcePath: m.sourcePath,
+      kind: m.type === "VIDEO" ? ("video" as const) : ("photo" as const),
+      takenAt: m.takenAt,
+      lat: i === k ? point.lat : (m.lat ?? undefined),
+      lng: i === k ? point.lng : (m.lng ?? undefined),
+    })),
+  );
+  if (WEATHER_ENABLED) {
+    await fillWeatherOverrides({ moved: entries }, allMedia);
+  }
+  await writeFile(
+    join(tripDir, "trip.json"),
+    JSON.stringify(overrides, null, 2) + "\n",
+  );
+  // Keep the template's coord record in step, as a template run would.
+  const coordsPath = join(CACHE_DIR, slug, "template-coords.json");
+  const lastCoords = await readFile(coordsPath, "utf8")
+    .then((raw) => JSON.parse(raw) as Record<string, string>)
+    .catch(() => ({}) as Record<string, string>);
+  for (const f of files) {
+    lastCoords[f] = WEATHER_ENABLED ? coord : (lastCoords[f] ?? "");
+  }
+  await mkdir(join(CACHE_DIR, slug), { recursive: true });
+  await writeFile(coordsPath, JSON.stringify(lastCoords));
+  console.log(`[ingest] ${slug}: moved ${files.length} photo(s) to ${coord}`);
+
+  allMedia.sort((a, b) => a.takenAt.getTime() - b.takenAt.getTime());
+  const drafts = groupIntoSteps(allMedia);
+  const sameGrouping =
+    drafts.length === trip.steps.length &&
+    drafts.every((d, i) => {
+      const ids = new Set(trip.steps[i]!.media.map((m) => m.sourcePath));
+      return (
+        d.media.length === ids.size &&
+        d.media.every((m) => ids.has(m.sourcePath))
+      );
+    });
+  if (!sameGrouping) {
+    console.log(`[ingest] ${slug}: steps regroup, re-ingesting the trip`);
+    await ingestTrip(slug);
+    return;
+  }
+
+  const { isMultiTrip } = await listTrips(slug);
+  const step = drafts[k]!;
+  const first = <K extends "weatherTempF" | "weatherCode">(key: K) =>
+    step.media
+      .map((m) => index.get(basename(m.sourcePath))?.[key])
+      .find((v) => v != null) ?? null;
+  const transportMode = (i: number) =>
+    inferTransportMode(
+      drafts[i - 1]!.centroid,
+      drafts[i]!.centroid,
+      drafts[i - 1]!.media.at(-1)!.takenAt,
+      drafts[i]!.arrivedAt,
+    );
+  const heaven = isHeaven(point);
+  const countryCode = heaven ? "" : (countryCodeForPoint(point) ?? "");
+  const locationName = heaven ? heavenName(trip.title) : names.locationName;
+  const steps = trip.steps.map((st, i) =>
+    i === k ? { ...st, ...point, countryCode } : st,
+  );
+  const next = trip.steps[k + 1];
+
+  await prisma.$transaction([
+    prisma.step.update({
+      where: { id: stepId },
+      data: {
+        ...point,
+        countryCode,
+        locationName,
+        cityName: names.cityName,
+        title:
+          stepTitleOverride(
+            overrides.stepTitles,
+            trip.number,
+            isMultiTrip,
+            k,
+          ) ?? locationName,
+        arrivedAt: step.arrivedAt,
+        weatherTempF: heaven ? null : first("weatherTempF"),
+        weatherCode: heaven ? null : first("weatherCode"),
+        ...(k > 0 && { transportMode: transportMode(k) }),
+      },
+    }),
+    ...(next
+      ? [
+          prisma.step.update({
+            where: { id: next.id },
+            data: { transportMode: transportMode(k + 1) },
+          }),
+        ]
+      : []),
+    prisma.media.updateMany({
+      where: { stepId },
+      data: point,
+    }),
+    prisma.trip.update({
+      where: { id: trip.id },
+      data: {
+        distanceKm: tripDistanceKm(steps.filter((st) => !isHeaven(st))),
+        countryCodes: JSON.stringify(uniqueCountryCodes(steps)),
+      },
+    }),
+  ]);
+}
+
 async function ingestAll(onlySlug?: string): Promise<void> {
   const slugs = onlySlug ? [onlySlug] : await listTripSlugs();
   for (const slug of slugs) {
@@ -595,6 +805,19 @@ async function ingestAll(onlySlug?: string): Promise<void> {
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+
+  // Run by the site's /api/step-location route, not by hand.
+  const moveIndex = args.indexOf("--move-step");
+  if (moveIndex !== -1) {
+    const [stepId, coord] = args.slice(moveIndex + 1);
+    if (!stepId || !coord) {
+      throw new Error("usage: --move-step <stepId> <lat,lng>");
+    }
+    await moveStep(stepId, coord);
+    await refreshSite();
+    await prisma.$disconnect();
+    return;
+  }
 
   const templateFlagIndex = args.indexOf("--photos-template");
   if (templateFlagIndex !== -1) {

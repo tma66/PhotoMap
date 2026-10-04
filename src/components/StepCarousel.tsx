@@ -1,7 +1,15 @@
 "use client";
 
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
-import type { StepView } from "@/lib/trip-view";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useSyncExternalStore,
+} from "react";
+import type { StepView, TripView } from "@/lib/trip-view";
+import { formatBookendDate } from "@/lib/format";
+import { EditLocationIcon } from "./icons";
 
 export interface StepCarouselHandle {
   /** The on-screen rect of a step's card, or null if it's not currently
@@ -9,6 +17,17 @@ export interface StepCarouselHandle {
    * card's position (see TripView.tsx). */
   getCardRect: (stepId: string) => DOMRect | null;
 }
+
+// Today's date in the visitor's own timezone, formatted like the other
+// bookend dates (which are naive local dates stored as UTC). Read on the
+// client only: pages are prerendered, so a server-rendered date would go stale.
+function todayLabel(): string {
+  const now = new Date();
+  return formatBookendDate(
+    new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())),
+  );
+}
+const noSubscribe = () => () => {};
 
 /** scrollLeft that puts `card` centered in `container`'s viewport. */
 function centeredScrollLeft(container: HTMLElement, card: HTMLElement): number {
@@ -19,12 +38,13 @@ interface StepCarouselProps {
   steps: StepView[];
   flags: string[];
   startDateLabel: string;
-  endDateLabel: string;
+  endCard: TripView["endCard"];
   activeIndex: number;
   isScrubbing?: boolean;
   onActiveChange: (index: number) => void;
   onScrollProgress: (progress: number) => void;
   onOpenStep: (index: number) => void;
+  onEditLocation: (index: number) => void;
 }
 
 const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
@@ -33,17 +53,19 @@ const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
       steps,
       flags,
       startDateLabel,
-      endDateLabel,
+      endCard,
       activeIndex,
       isScrubbing = false,
       onActiveChange,
       onScrollProgress,
       onOpenStep,
+      onEditLocation,
     },
     ref,
   ) {
+    const today = useSyncExternalStore(noSubscribe, todayLabel, () => "");
     const scrollRef = useRef<HTMLDivElement>(null);
-    const cardRefs = useRef<(HTMLButtonElement | null)[]>([]);
+    const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
     const suppressScrollReport = useRef(false);
     const suppressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     // True for one effect run right after the carousel's own scroll handler
@@ -165,59 +187,73 @@ const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
           const cover = step.media[0];
 
           return (
-            <button
+            <div
               key={step.id}
               ref={(el) => {
                 cardRefs.current[i] = el;
               }}
-              type="button"
-              onClick={() => onOpenStep(i)}
-              className="relative shrink-0 w-[82%] aspect-[5/4] rounded-3xl snap-center text-left shadow-soft transition-transform active:scale-[0.98]"
+              className="relative shrink-0 w-[82%] aspect-[5/4] snap-center"
             >
-              {/* overflow-hidden lives on this inner wrapper, not the
+              <button
+                type="button"
+                onClick={() => onOpenStep(i)}
+                className="absolute inset-0 rounded-3xl text-left shadow-soft transition-transform active:scale-[0.98]"
+              >
+                {/* overflow-hidden lives on this inner wrapper, not the
                   button itself — box-shadow on the same box as
                   overflow-hidden gets clipped away by the browser. */}
-              <div className="absolute inset-0 rounded-3xl overflow-hidden border border-white/15">
-                {cover && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={cover.thumbUrl}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    className="absolute inset-0 w-full h-full object-cover bg-cover"
-                    style={{ backgroundImage: `url(${cover.placeholder})` }}
-                  />
-                )}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+                <div className="absolute inset-0 rounded-3xl overflow-hidden border border-white/15">
+                  {cover && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={cover.thumbUrl}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                      className="absolute inset-0 w-full h-full object-cover bg-cover"
+                      style={{ backgroundImage: `url(${cover.placeholder})` }}
+                    />
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
 
-                <span className="absolute top-2.5 left-2.5 w-7 h-7 rounded-full bg-white/90 shadow-soft flex items-center justify-center text-sm">
-                  {step.flag}
-                </span>
-                {step.media.length > 1 && (
-                  <span className="absolute top-2.5 right-2.5 bg-black/50 text-white text-[11px] font-semibold px-2 py-1 rounded-full">
-                    📷 {step.media.length}
+                  <span className="absolute top-2.5 left-2.5 w-7 h-7 rounded-full bg-white/90 shadow-soft flex items-center justify-center text-sm">
+                    {step.flag}
                   </span>
-                )}
+                  {step.media.length > 1 && (
+                    <span className="absolute top-2.5 right-2.5 bg-black/50 text-white text-[11px] font-semibold px-2 py-1 rounded-full">
+                      📷 {step.media.length}
+                    </span>
+                  )}
 
-                <div className="absolute bottom-3 left-3 right-3">
-                  <p className="text-white font-bold text-base leading-tight drop-shadow">
-                    {step.title}
-                  </p>
-                  <p className="text-white/85 text-xs mt-0.5">
-                    {step.countryName}
-                  </p>
+                  <div className="absolute bottom-3 left-3 right-14">
+                    <p className="text-white font-bold text-base leading-tight drop-shadow">
+                      {step.title}
+                    </p>
+                    <p className="text-white/85 text-xs mt-0.5">
+                      {step.countryName}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            </button>
+              </button>
+              {/* A sibling of the card's button, not inside it (no nested
+                  buttons). Opens LocationPicker — see TripView.tsx. */}
+              <button
+                type="button"
+                onClick={() => onEditLocation(i)}
+                aria-label="Change location"
+                className="absolute bottom-2.5 right-2.5 w-9 h-9 rounded-full bg-white/90 shadow-soft flex items-center justify-center active:scale-95"
+              >
+                <EditLocationIcon size={18} />
+              </button>
+            </div>
           );
         })}
 
         <BookendCard
           icon="flag"
-          label="Trip finished"
-          dateLabel={endDateLabel}
-          flags={flags}
+          label={endCard.label}
+          dateLabel={endCard.dateLabel ?? today}
+          flags={endCard.flags}
         />
       </div>
     );

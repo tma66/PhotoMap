@@ -21,15 +21,17 @@ export interface StepView {
   dayNumber: number;
   title: string;
   locationName: string;
+  cityName: string;
   countryCode: string;
   countryName: string;
   flag: string;
+  /** At 0,0: a pet's last stop, shown above the globe — see src/lib/heaven.ts. */
+  heaven: boolean;
   dateLabel: string;
   weatherIcon: string;
   weatherTempF: number | null;
   lat: number;
   lng: number;
-  arrivedAtISO: string;
   transportMode: string;
   journalText: string;
   media: MediaView[];
@@ -42,11 +44,15 @@ export interface TripView {
   zoomName: string; // matches the tile that opens it — see page-transition.ts
   owner: { name: string; avatarUrl: string | null };
   flags: string[];
+  /** Next to the title in the header: the paw, for a trip ending in heaven. */
+  titleFlags: string[];
   statsLabel: string; // "28 days · 6 cities · 4,099 km"
   startDateLabel: string; // "SUN, AUG 16, 2026" — trip-started bookend card
-  endDateLabel: string; // "SUN, AUG 23, 2026" — trip-finished bookend card
+  /** The trip-finished bookend card. A trip ending in heaven (see
+   * src/lib/heaven.ts) is "never forgotten" instead, dated today — null
+   * `dateLabel`, filled in by the visitor's browser. */
+  endCard: { label: string; dateLabel: string | null; flags: string[] };
   steps: StepView[];
-  trackPoints: { tISO: string; lat: number; lng: number }[];
 }
 
 /** The /m/<slug> page for a folder holding several trips — one tile each. */

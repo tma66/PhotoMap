@@ -5,14 +5,16 @@
 // an entry to another date by hand overrides a wrong one (e.g. a photo with
 // no EXIF date, which falls back to the file's own date). See filedDates.
 import { basename } from "node:path";
-import { countryCodeForPoint, nearestPlaceName } from "./geocode";
+import { cityNameFor, countryCodeForPoint, nearestPlaceName } from "./geocode";
 import type { LatLng } from "../lib/geo";
+import { HEAVEN_PLACE, isHeaven } from "../lib/heaven";
 import type { TaggedMedia } from "./steps";
 
 interface PhotoOverride {
   file: string; // basename, e.g. "IMG_1234.HEIC"
   coord?: string | null; // "lat,lng", e.g. "1.8173,73.4049"
   locationName?: string | null;
+  cityName?: string | null; // decides route lines — see src/lib/route.ts
   weatherTempF?: number | null;
   weatherCode?: number | null;
 }
@@ -68,14 +70,24 @@ export function buildOverrideIndex(
   return index;
 }
 
-/** The place name a coord resolves to (offline — see geocode.ts). */
-function placeNameFor(coord: LatLng): string {
-  return nearestPlaceName(coord, countryCodeForPoint(coord));
+/** The place and city names a coord resolves to (offline — see geocode.ts). */
+export function namesFor(coord: LatLng): {
+  locationName: string;
+  cityName: string;
+} {
+  if (isHeaven(coord)) {
+    return { locationName: HEAVEN_PLACE, cityName: HEAVEN_PLACE };
+  }
+  const countryCode = countryCodeForPoint(coord);
+  return {
+    locationName: nearestPlaceName(coord, countryCode),
+    cityName: cityNameFor(coord, countryCode),
+  };
 }
 
 /**
- * Re-derives locationName (and, with `clearWeather`, blanks weather so the
- * caller refetches it) for every entry whose coord changed since the last
+ * Re-derives locationName and cityName (and, with `clearWeather`, blanks
+ * weather so the caller refetches it) for every entry whose coord changed since the last
  * template run — `lastCoords` maps file -> coord as of then. An entry with
  * no record yet counts as changed only if its locationName doesn't match its
  * coord, so a name or weather typed in by hand survives while the coord it
@@ -90,12 +102,13 @@ export function refreshChangedCoords(
   for (const entry of allEntries(block)) {
     const coord = parseCoord(entry.coord);
     if (!coord) continue;
-    const name = placeNameFor(coord);
     const last = lastCoords[entry.file];
     const changed =
-      last !== undefined ? last !== entry.coord : entry.locationName !== name;
+      last !== undefined
+        ? last !== entry.coord
+        : entry.locationName !== namesFor(coord).locationName;
     if (!changed) continue;
-    entry.locationName = name;
+    Object.assign(entry, namesFor(coord));
     if (clearWeather) {
       entry.weatherTempF = null;
       entry.weatherCode = null;
@@ -124,7 +137,7 @@ export function filedDates(
 /**
  * Builds/updates one trip's "photos" block of trip.json. Existing entries
  * (matched by filename, wherever they were filed) stay exactly where they
- * are — same date, same order — with only a missing locationName filled in
+ * are — same date, same order — with only a missing locationName/cityName filled in
  * below (refreshing names/weather after a coord change, and fetching
  * weather, is the caller's job — see refreshChangedCoords and `index.ts`).
  * Entries for photos no longer on disk are dropped, and each new photo gets
@@ -137,10 +150,21 @@ export function buildPhotoTemplate(
 ): PhotoOverridesByDay {
   const onDisk = new Map(media.map((m) => [basename(m.sourcePath), m]));
   const result: PhotoOverridesByDay = {};
-  const add = (day: string, entry: PhotoOverride) => {
-    if (!entry.locationName) {
-      const coord = parseCoord(entry.coord);
-      if (coord) entry.locationName = placeNameFor(coord);
+  const add = (day: string, existing: PhotoOverride) => {
+    // cityName sits next to locationName, also in entries written before it existed.
+    const { file, coord: c, locationName, cityName = null, ...rest } = existing;
+    const entry: PhotoOverride = {
+      file,
+      coord: c,
+      locationName,
+      cityName,
+      ...rest,
+    };
+    const coord = parseCoord(entry.coord);
+    if (coord && (!entry.locationName || !entry.cityName)) {
+      const names = namesFor(coord);
+      entry.locationName ||= names.locationName;
+      entry.cityName ||= names.cityName;
     }
     (result[day] ??= []).push(entry);
     onDisk.delete(entry.file);
@@ -158,6 +182,7 @@ export function buildPhotoTemplate(
       file,
       coord: m.lat != null && m.lng != null ? `${m.lat},${m.lng}` : null,
       locationName: null,
+      cityName: null,
       weatherTempF: null,
       weatherCode: null,
     });

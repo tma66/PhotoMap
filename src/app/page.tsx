@@ -13,6 +13,7 @@ import {
   formatMonthYearCaps,
   countryCodeToFlagEmoji,
 } from "@/lib/format";
+import { isHeaven } from "@/lib/heaven";
 import HomeView from "@/components/HomeView";
 import type { HomeTripCard, HomeData } from "@/lib/home-view";
 
@@ -24,6 +25,8 @@ export default async function HomePage() {
     // width/height, takenAt, lat/lng, the full base64 placeholder...) of
     // every photo of every trip just to pick one cover + one thumb per step.
     prisma.trip.findMany({
+      // The bundled demo folder stays reachable at /m/example but isn't listed.
+      where: { slug: { not: "example" } },
       orderBy: { startDate: "desc" },
       select: {
         slug: true,
@@ -39,7 +42,6 @@ export default async function HomePage() {
           select: {
             lat: true,
             lng: true,
-            order: true,
             locationName: true,
             media: {
               orderBy: { order: "asc" },
@@ -83,20 +85,21 @@ export default async function HomePage() {
 
   const globeSteps = trips.flatMap((trip) =>
     trip.steps
-      .filter((s) => s.media.length > 0)
+      .filter((s) => s.media.length > 0 && !isHeaven(s))
       .map((s) => ({
         lat: s.lat,
         lng: s.lng,
         thumbUrl: mediaUrl(trip.slug, s.media[0]!.hash, "thumb"),
         tripId: `${trip.slug}/${trip.number}`,
-        order: s.order,
       })),
   );
 
   const allCountryCodes = [
     ...new Set(trips.flatMap((t) => JSON.parse(t.countryCodes) as string[])),
   ];
-  const totalCities = uniqueCityCount(trips.flatMap((t) => t.steps));
+  const totalCities = uniqueCityCount(
+    trips.flatMap((t) => t.steps).filter((s) => !isHeaven(s)),
+  );
   const totalKm = Math.round(trips.reduce((n, t) => n + t.distanceKm, 0));
   const totalDays = trips.reduce(
     (n, t) => n + tripDurationDays(t.startDate, t.endDate),

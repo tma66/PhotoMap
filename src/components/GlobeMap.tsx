@@ -4,7 +4,6 @@ import { useEffect, useRef } from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./maplibre-worker";
-import { greatCircleArc, haversineKm } from "@/lib/geo";
 import type { HomeGlobeStep } from "@/lib/home-view";
 import { GLOBE_SKY, labelsSource, satelliteSource } from "@/lib/map-style";
 
@@ -147,65 +146,6 @@ export default function GlobeMap({
     map.on("load", () => {
       map.addImage("starfield", starfieldPattern());
       map.setPaintProperty("bg", "background-pattern", "starfield");
-
-      const bySteps = new Map<string, HomeGlobeStep[]>();
-      for (const s of steps) {
-        const arr = bySteps.get(s.tripId) ?? [];
-        arr.push(s);
-        bySteps.set(s.tripId, arr);
-      }
-
-      // Straight lng/lat segments between far-apart steps would be chords
-      // cutting through the globe's interior rather than hugging its
-      // surface — interpolate along the great circle instead (see
-      // route.ts's buildRouteLegs for the matching flat-map version).
-      //
-      // Skip legs longer than a flight-scale distance: a long-haul leg's
-      // great circle bulges toward the pole, and on this small rotating
-      // overview globe that bulge often reads as a stray line with neither
-      // real endpoint in view — useful detail on the per-trip map, just
-      // visual noise here. Split into a separate line run instead of
-      // connecting across the gap.
-      const GLOBE_LINE_MAX_LEG_KM = 1500;
-      const lineFeatures: GeoJSON.Feature[] = [...bySteps.values()]
-        .flatMap((tripSteps) => {
-          const sorted = [...tripSteps].sort((a, b) => a.order - b.order);
-          const runs: [number, number][][] = [[]];
-          runs[0]!.push([sorted[0]!.lng, sorted[0]!.lat]);
-          for (let i = 1; i < sorted.length; i++) {
-            const from = sorted[i - 1]!;
-            const to = sorted[i]!;
-            if (haversineKm(from, to) > GLOBE_LINE_MAX_LEG_KM) {
-              runs.push([[to.lng, to.lat]]);
-              continue;
-            }
-            const arc = greatCircleArc(from, to, 24).slice(1);
-            runs
-              .at(-1)!
-              .push(...arc.map((p) => [p.lng, p.lat] as [number, number]));
-          }
-          return runs.map((coordinates) => ({
-            type: "Feature" as const,
-            properties: {},
-            geometry: { type: "LineString" as const, coordinates },
-          }));
-        })
-        .filter((f) => f.geometry.coordinates.length >= 2);
-
-      map.addSource("globe-routes", {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: lineFeatures },
-      });
-      map.addLayer({
-        id: "globe-routes-line",
-        type: "line",
-        source: "globe-routes",
-        paint: {
-          "line-color": "#ffffff",
-          "line-width": 1.2,
-          "line-opacity": 0.7,
-        },
-      });
 
       for (const step of steps) {
         const el = document.createElement("div");

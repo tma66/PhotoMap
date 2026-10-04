@@ -150,6 +150,114 @@ body {
   opacity: 1;
 }
 
+/* Paradise above the globe for a step at 0,0 (components/HeavenScene.tsx).
+   The anchor rests on the globe's top edge; the scene fades in on it
+   once the camera has pulled back to the globe. */
+.heaven-anchor {
+  position: absolute;
+  left: 50%;
+  aspect-ratio: 340 / 190;
+  transform: translate(-50%, calc(-100% + 18%));
+  pointer-events: none;
+}
+.heaven-scene {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  /* 1.8s each way — HEAVEN_FADE_MS in TripMap.tsx waits on this. */
+  transition: opacity 1.8s ease;
+}
+.heaven-anchor[data-visible="true"] .heaven-scene {
+  opacity: 1;
+  /* Fading in starts slowly; plain ease front-loads it and reads as a pop. */
+  transition-timing-function: ease-in-out;
+}
+.heaven-glow {
+  animation: heaven-glow 5s ease-in-out infinite;
+  transform-origin: 170px 90px;
+}
+.heaven-float {
+  animation: heaven-float 5s ease-in-out infinite;
+}
+.heaven-sparkle {
+  animation: heaven-twinkle 2.4s ease-in-out infinite;
+}
+.heaven-pin-spot {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  transform: translate(-50%, -50%);
+}
+.heaven-anchor[data-visible="true"] .heaven-pin {
+  pointer-events: auto;
+}
+/* Twice a map pin's size. */
+.trip-pin.heaven-pin {
+  width: 88px;
+  height: 88px;
+  border-width: 4px;
+  transform: none;
+  box-shadow:
+    0 0 0 5px rgba(255, 212, 59, 0.6),
+    0 0 26px 6px rgba(255, 236, 153, 0.85);
+}
+.heaven-pin .trip-pin-label {
+  font-size: 13px;
+  padding: 4px 12px;
+}
+.heaven-halo {
+  position: absolute;
+  left: 50%;
+  top: -24px;
+  width: 54px;
+  height: 15px;
+  transform: translateX(-50%);
+  border: 4px solid #ffd43b;
+  border-radius: 50%;
+  box-shadow: 0 0 10px 3px rgba(255, 212, 59, 0.7);
+  z-index: 11;
+}
+@keyframes heaven-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+@keyframes heaven-glow {
+  0%,
+  100% {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+@keyframes heaven-twinkle {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .heaven-scene {
+    transition: none;
+  }
+  .heaven-glow,
+  .heaven-float,
+  .heaven-sparkle {
+    animation: none;
+  }
+}
+
 .globe-pin {
   width: 22px;
   height: 22px;

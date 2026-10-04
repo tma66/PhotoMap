@@ -13,6 +13,8 @@ interface MapOverlayHeaderProps {
   statsLabel: string;
   mapStyleMode: "satellite" | "streets";
   onToggleMapStyleMode: () => void;
+  showRoute: boolean;
+  onToggleRoute: () => void;
 }
 
 export default function MapOverlayHeader({
@@ -23,6 +25,8 @@ export default function MapOverlayHeader({
   statsLabel,
   mapStyleMode,
   onToggleMapStyleMode,
+  showRoute,
+  onToggleRoute,
 }: MapOverlayHeaderProps) {
   const router = useRouter();
   return (
@@ -85,6 +89,33 @@ export default function MapOverlayHeader({
               <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
               <line x1="8" y1="2" x2="8" y2="18" />
               <line x1="16" y1="6" x2="16" y2="22" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={onToggleRoute}
+            aria-label={showRoute ? "Hide route lines" : "Show route lines"}
+            aria-pressed={showRoute}
+            className="w-12 h-12 rounded-full map-icon-button flex items-center justify-center shadow-soft"
+          >
+            {/* A dashed route between two stops, struck through while hidden. */}
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#ffffff"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="6" cy="19" r="2.5" />
+              <circle cx="18" cy="5" r="2.5" />
+              <path
+                d="M8.5 19h8a3.5 3.5 0 0 0 0-7h-9a3.5 3.5 0 0 1 0-7h8"
+                strokeDasharray="2.5 2.5"
+              />
+              {!showRoute && <line x1="3" y1="3" x2="21" y2="21" />}
             </svg>
           </button>
         </div>

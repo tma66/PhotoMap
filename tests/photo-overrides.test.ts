@@ -54,6 +54,30 @@ describe("buildPhotoTemplate", () => {
     ).toEqual(["A.jpg"]);
   });
 
+  it("fills a missing cityName from the coord, next to locationName", () => {
+    const media = [photo("A.jpg", "2026-05-20T08:00:00Z")];
+    const existing = {
+      "2026-05-20": [
+        {
+          file: "A.jpg",
+          coord: "34.0635,-118.4455", // Westwood
+          locationName: "Hand-typed",
+          weatherTempF: 70,
+          weatherCode: 1,
+        },
+      ],
+    };
+    const entry = buildPhotoTemplate(media, existing)["2026-05-20"]![0]!;
+    expect(entry.cityName).toBe("Los Angeles");
+    expect(entry.locationName).toBe("Hand-typed");
+    expect(Object.keys(entry).slice(0, 4)).toEqual([
+      "file",
+      "coord",
+      "locationName",
+      "cityName",
+    ]);
+  });
+
   it("finds an existing entry filed under another trip's block", () => {
     const media = [photo("A.jpg", "2026-09-28T10:00:00Z")];
     const existing = { "2": { "2026-05-21": [entry("A.jpg")] } };
@@ -92,6 +116,7 @@ describe("refreshChangedCoords", () => {
       "A.jpg",
     ]);
     expect(e.locationName).not.toBe("Hand-typed");
+    expect(e).toHaveProperty("cityName", "Rome");
     expect(e.weatherTempF).toBeNull();
   });
 

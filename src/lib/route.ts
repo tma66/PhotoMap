@@ -1,55 +1,37 @@
-// Builds the GeoJSON the map draws for a trip: a dashed great-circle arc for
-// each flight leg, and the dense actual-photos trail for ground legs.
+// Builds the GeoJSON the map draws for a trip: a dashed great-circle line
+// from each step's pin to the next one in a different city. Pin to pin (not
+// along the photos' GPS trail) so the line always meets the pins, including
+// ones moved by hand.
 import { greatCircleArc } from "./geo";
+import { isHeaven } from "./heaven";
 
 export interface RouteStep {
   id: string;
   lat: number;
   lng: number;
-  arrivedAt: Date;
   transportMode: string;
-  locationName: string;
-}
-
-export interface RouteTrackPoint {
-  t: Date;
-  lat: number;
-  lng: number;
+  /** Steps in the same city get no line between them — see cityNameFor in
+   * src/ingest/geocode.ts. */
+  cityName: string;
 }
 
 interface RouteLeg {
   coordinates: [number, number][]; // [lng, lat], GeoJSON order
 }
 
-export function buildRouteLegs(
-  steps: RouteStep[],
-  trackPoints: RouteTrackPoint[],
-): RouteLeg[] {
+export function buildRouteLegs(steps: RouteStep[]): RouteLeg[] {
   const legs: RouteLeg[] = [];
 
   for (let i = 1; i < steps.length; i++) {
     const from = steps[i - 1]!;
     const to = steps[i]!;
-    if (from.locationName === to.locationName) continue; // same city, no line
-    const isFlight = to.transportMode === "FLIGHT";
-
-    let coords: [number, number][];
-    if (isFlight) {
-      coords = greatCircleArc(from, to, 48).map(
-        (p) => [p.lng, p.lat] as [number, number],
-      );
-    } else {
-      const between = trackPoints.filter(
-        (p) => p.t >= from.arrivedAt && p.t <= to.arrivedAt,
-      );
-      coords =
-        between.length >= 2
-          ? between.map((p) => [p.lng, p.lat] as [number, number])
-          : greatCircleArc(from, to, 24).map(
-              (p) => [p.lng, p.lat] as [number, number],
-            );
-    }
-
+    if (from.cityName === to.cityName) continue;
+    if (isHeaven(from) || isHeaven(to)) continue; // no line up to heaven
+    // Flights get a smoother arc; a ground leg is short enough for fewer points.
+    const points = to.transportMode === "FLIGHT" ? 48 : 24;
+    const coords = greatCircleArc(from, to, points).map(
+      (p) => [p.lng, p.lat] as [number, number],
+    );
     legs.push({ coordinates: coords });
   }
 

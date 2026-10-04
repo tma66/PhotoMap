@@ -2,8 +2,8 @@
 
 <img src="https://github.com/tma66/PhotoMap/releases/download/readme-assets/demo.webp" alt="PhotoMap demo" width="360" />
 
-A self-hosted, read-only travel journal generated automatically from your own
-photos and videos, with no login, no cloud, and no editor UI. Point it at a folder of
+A self-hosted travel journal generated automatically from your own photos
+and videos, with no login and no cloud. Point it at a folder of
 photos and it builds a mobile trip page: a day-by-day map, a swipeable story
 view, and a 3D globe of every trip. Share a trip by handing out its URL (an
 NFC tag on a fridge magnet works great).
@@ -13,7 +13,10 @@ NFC tag on a fridge magnet works great).
 - Groups photos/videos into day-by-day "steps" from EXIF/QuickTime GPS + date,
   with no manual trip-building.
 - Full-screen story view (photos + video, swipe between steps, tap-to-unmute)
-  and a day scrubber over a live map (satellite or streets).
+  and a day scrubber over a live map (satellite or streets), with dotted
+  route lines between cities that you can toggle off.
+- Fix a step's location right on the trip page: search for a place or drag
+  the map under a pin, and every photo in that step moves there.
 - A 3D auto-rotating globe on the home page showing every trip.
 - Runs entirely from your own machine, with no account and no third-party storage.
   An optional free Mapbox token upgrades the map tiles; everything works
@@ -36,7 +39,8 @@ npx prisma generate
 npx prisma db push      # creates prisma/data/photomap.db
 ```
 
-Add your first trip (see below), then:
+`assets/example/` is a bundled demo trip: it isn't listed on the home page,
+but opens at `/m/example/1`. Add your first trip (see below), then:
 
 ```
 npm run build && npm start   # http://localhost:3000
@@ -54,7 +58,7 @@ npm run build && npm start   # http://localhost:3000
    from a photo's "Description"/IPTC field (Apple Photos: right-click → Get
    Info → add a caption before exporting). A photo or video with no GPS, on a
    day with no other geotagged item to fall back on, is dropped rather than
-   guessed at.
+   guessed at. Byte-identical duplicate files are skipped.
 3. Ingest it:
    ```
    npm run ingest -- japan-2025      # just this trip
@@ -77,11 +81,20 @@ swallows the flag and runs a plain ingest instead. In a folder with trip
 subfolders, `photos` is grouped by subfolder number first
 (`{ "1": { "2025-05-16": [...] }, "3": { ... } }`). A trip with no
 geotagged photo at all is left off the site until you fill in a `coord`.
+
 Existing entries are never moved or reordered: to fix a photo's date (e.g.
 one with no EXIF date, which falls back to the file's date), move its entry
 under the right date and it's treated as taken that day. Change a `coord`
-and the next run re-derives that photo's `locationName` and weather; a name
-or weather you typed yourself is kept as long as its coord stays the same.
+and the next run re-derives that photo's `locationName`, `cityName` and
+weather; a value you typed yourself is kept as long as its coord stays the
+same. `cityName` (the biggest place within 25 km, so a neighborhood counts
+as its city) decides the dotted route lines: they only join consecutive
+steps in different cities, so type a different one to group or split steps.
+
+To fix a whole step's location, use the pin-and-pencil button on its card
+on the trip page: it writes the new `coord`, place names and weather to
+every photo in that step and updates the site in a second or two. **Anyone
+who can open the site can do this.**
 
 ### Other overrides
 
@@ -98,7 +111,8 @@ Optional `assets/japan-2025/trip.json` fields, on top of the auto-filled
 
 - `cover`: filename of the photo used as the trip's card image (defaults to
   the first step's first photo).
-- `stepTitles`: override a step's auto-generated title, keyed by day number.
+- `stepTitles`: override a step's auto-generated title, keyed by step
+  position (`"0"` is the first step).
   In a folder holding several trips, nest it by trip number:
   `{ "2": { "0": "Main stage" } }`.
 

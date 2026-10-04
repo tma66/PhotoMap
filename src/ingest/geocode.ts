@@ -174,3 +174,31 @@ export function nearestPlaceName(point: LatLng, countryCode?: string): string {
 
   return nearestCity(point, searchPool)?.city.name ?? "Unknown location";
 }
+
+// A city's reach: a point's "city" is the most populous place within this
+// distance, so a neighborhood (Westwood, Mission District) reads as the city
+// it belongs to (Los Angeles, San Francisco).
+const CITY_RADIUS_KM = 25;
+
+/**
+ * The city a coordinate belongs to: the most populous place within
+ * CITY_RADIUS_KM (in the same country, when known), or the nearest named
+ * place when nothing is that close. Used to decide which steps get a route
+ * line between them (see src/lib/route.ts).
+ */
+export function cityNameFor(point: LatLng, countryCode?: string): string {
+  // Cheap bounding-box prefilter before any distance math.
+  const dLat = CITY_RADIUS_KM / 111;
+  const dLng = dLat / Math.max(Math.cos((point.lat * Math.PI) / 180), 0.01);
+  let best: CityRecord | undefined;
+  for (const city of cities) {
+    const [lng, lat] = city.loc.coordinates;
+    if (Math.abs(lat - point.lat) > dLat || Math.abs(lng - point.lng) > dLng) {
+      continue;
+    }
+    if (countryCode && city.country !== countryCode) continue;
+    if (best && city.population <= best.population) continue;
+    if (haversineKm(point, { lat, lng }) <= CITY_RADIUS_KM) best = city;
+  }
+  return best?.name ?? nearestPlaceName(point, countryCode);
+}

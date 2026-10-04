@@ -38,6 +38,7 @@ model Step {
   order         Int
   title         String
   locationName  String
+  cityName      String   @default("") // route lines join steps in different cities
   countryCode   String
   lat           Float
   lng           Float

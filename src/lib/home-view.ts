@@ -12,7 +12,6 @@ export interface HomeGlobeStep {
   lng: number;
   thumbUrl: string | null;
   tripId: string; // "<slug>/<n>" — unique per trip, used to navigate on tap
-  order: number;
 }
 
 export interface HomeData {
