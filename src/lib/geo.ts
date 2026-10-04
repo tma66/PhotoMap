@@ -86,19 +86,3 @@ export function greatCircleArc(a: LatLng, b: LatLng, steps = 64): LatLng[] {
   }
   return points;
 }
-
-/**
- * Simplify a dense track to at most `maxPoints`, keeping first/last and
- * evenly sampling in between (fast, deterministic — good enough for a
- * decorative route line; swap for Douglas-Peucker via @turf/simplify if the
- * route ever looks too blocky).
- */
-export function downsample<T>(points: T[], maxPoints: number): T[] {
-  if (points.length <= maxPoints) return points;
-  const result: T[] = [];
-  const step = (points.length - 1) / (maxPoints - 1);
-  for (let i = 0; i < maxPoints; i++) {
-    result.push(points[Math.round(i * step)]!);
-  }
-  return result;
-}

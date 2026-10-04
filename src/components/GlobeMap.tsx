@@ -150,9 +150,7 @@ export default function GlobeMap({
       for (const step of steps) {
         const el = document.createElement("div");
         el.className = "globe-pin";
-        el.innerHTML = step.thumbUrl
-          ? `<img src="${step.thumbUrl}" alt="" />`
-          : "";
+        el.innerHTML = step.pinUrl ? `<img src="${step.pinUrl}" alt="" />` : "";
         if (onSelectStep) {
           el.style.cursor = "pointer";
           el.addEventListener("click", () => onSelectStep(step.tripId));

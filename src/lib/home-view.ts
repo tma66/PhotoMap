@@ -10,7 +10,7 @@ export interface HomeTripCard {
 export interface HomeGlobeStep {
   lat: number;
   lng: number;
-  thumbUrl: string | null;
+  pinUrl: string | null;
   tripId: string; // "<slug>/<n>" — unique per trip, used to navigate on tap
 }
 

@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  downsample,
-  greatCircleArc,
-  haversineKm,
-  pathLengthKm,
-} from "@/lib/geo";
+import { greatCircleArc, haversineKm, pathLengthKm } from "@/lib/geo";
 
 describe("haversineKm", () => {
   it("is zero for the same point", () => {
@@ -87,20 +82,5 @@ describe("greatCircleArc", () => {
       ((singapore.lng % 360) + 360) % 360,
       5,
     );
-  });
-});
-
-describe("downsample", () => {
-  it("returns the input unchanged when already short enough", () => {
-    const points = [1, 2, 3];
-    expect(downsample(points, 5)).toEqual(points);
-  });
-
-  it("keeps the first and last point", () => {
-    const points = Array.from({ length: 100 }, (_, i) => i);
-    const result = downsample(points, 10);
-    expect(result[0]).toBe(0);
-    expect(result.at(-1)).toBe(99);
-    expect(result).toHaveLength(10);
   });
 });

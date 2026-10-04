@@ -15,7 +15,7 @@ import {
 } from "@/lib/format";
 import { isHeaven } from "@/lib/heaven";
 import HomeView from "@/components/HomeView";
-import type { HomeTripCard, HomeData } from "@/lib/home-view";
+import type { HomeTripCard, HomeData, HomeGlobeStep } from "@/lib/home-view";
 
 export default async function HomePage() {
   const [profile, trips] = await Promise.all([
@@ -42,7 +42,7 @@ export default async function HomePage() {
           select: {
             lat: true,
             lng: true,
-            locationName: true,
+            cityName: true,
             media: {
               orderBy: { order: "asc" },
               take: 1,
@@ -83,16 +83,24 @@ export default async function HomePage() {
     };
   });
 
-  const globeSteps = trips.flatMap((trip) =>
-    trip.steps
-      .filter((s) => s.media.length > 0 && !isHeaven(s))
-      .map((s) => ({
+  // One pin per spot (~100 m): pins stacked on the same place look like the
+  // top one anyway, so only the last (drawn on top) is kept — instead of
+  // several hundred markers and thumbnails, most of them hidden.
+  const globePins = new Map<string, HomeGlobeStep>();
+  for (const trip of trips) {
+    for (const s of trip.steps) {
+      if (s.media.length === 0 || isHeaven(s)) continue;
+      const spot = `${s.lat.toFixed(3)},${s.lng.toFixed(3)}`;
+      globePins.delete(spot); // re-inserted last, keeping the drawing order
+      globePins.set(spot, {
         lat: s.lat,
         lng: s.lng,
-        thumbUrl: mediaUrl(trip.slug, s.media[0]!.hash, "thumb"),
+        pinUrl: mediaUrl(trip.slug, s.media[0]!.hash, "pin"),
         tripId: `${trip.slug}/${trip.number}`,
-      })),
-  );
+      });
+    }
+  }
+  const globeSteps = [...globePins.values()];
 
   const allCountryCodes = [
     ...new Set(trips.flatMap((t) => JSON.parse(t.countryCodes) as string[])),

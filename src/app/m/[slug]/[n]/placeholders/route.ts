@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 
 /** Every photo's blur placeholder for one trip, keyed by media hash. Kept
- * out of the trip page itself (which only inlines each step's cover one),
+ * out of the trip page itself (which only inlines its first few covers'),
  * so the page — prefetched from every tile that links to it — stays small. */
 export async function GET(
   _request: Request,

@@ -7,8 +7,8 @@ interface MediaView {
   type: "IMAGE" | "VIDEO";
   thumbUrl: string;
   displayUrl: string;
-  /** Inline only for a step's cover (its carousel card); the rest arrive
-   * after the page does — see TripView.tsx. */
+  /** Inline only for the first few steps' covers (the carousel cards on
+   * screen at load); the rest arrive after the page does — see TripView.tsx. */
   placeholder: string | null;
   /** Set only for type "VIDEO" — the playable derivative (thumb/display are
    * its poster frame, same as any other photo). */
@@ -27,6 +27,8 @@ export interface StepView {
   flag: string;
   /** At 0,0: a pet's last stop, shown above the globe — see src/lib/heaven.ts. */
   heaven: boolean;
+  /** The cover photo at map-pin size, for the step's pin. */
+  pinUrl: string | null;
   dateLabel: string;
   weatherIcon: string;
   weatherTempF: number | null;

@@ -44,6 +44,7 @@ export default function TripView({ trip }: { trip: TripViewData }) {
         locationName: s.locationName,
         cityName: s.cityName,
         thumbUrl: s.media[0]?.thumbUrl ?? null,
+        pinUrl: s.pinUrl,
       })),
     [trip.steps],
   );
@@ -53,14 +54,14 @@ export default function TripView({ trip }: { trip: TripViewData }) {
       mapSteps
         .map(
           (s) =>
-            `${s.id}@${s.lat},${s.lng}:${s.locationName}:${s.cityName}:${s.thumbUrl}`,
+            `${s.id}@${s.lat},${s.lng}:${s.locationName}:${s.cityName}:${s.pinUrl}`,
         )
         .join("|"),
     [mapSteps],
   );
 
-  // Blur placeholders for every photo past each step's cover (which the page
-  // inlines), fetched once the page is up — only the story view shows them.
+  // Blur placeholders for every photo the page didn't inline (only the first
+  // few cards' covers), fetched once the page is up.
   const [placeholders, setPlaceholders] = useState<Record<string, string>>();
   useEffect(() => {
     const controller = new AbortController();
@@ -70,7 +71,7 @@ export default function TripView({ trip }: { trip: TripViewData }) {
       .catch(() => {});
     return () => controller.abort();
   }, [trip.path]);
-  const storySteps = useMemo(
+  const stepsWithPlaceholders = useMemo(
     () =>
       placeholders
         ? trip.steps.map((s) => ({
@@ -142,7 +143,7 @@ export default function TripView({ trip }: { trip: TripViewData }) {
         />
         <StepCarousel
           ref={carouselRef}
-          steps={trip.steps}
+          steps={stepsWithPlaceholders}
           flags={trip.flags}
           startDateLabel={trip.startDateLabel}
           endCard={trip.endCard}
@@ -182,7 +183,7 @@ export default function TripView({ trip }: { trip: TripViewData }) {
       {storyOpen && (
         <StepStory
           key={activeIndex}
-          steps={storySteps}
+          steps={stepsWithPlaceholders}
           stepIndex={activeIndex}
           initialMediaIndex={
             storyEnterAtEnd

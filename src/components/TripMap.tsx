@@ -17,7 +17,9 @@ import {
 
 export interface MapStep extends RouteStep {
   locationName: string;
+  /** HeavenScene's larger pin. */
   thumbUrl: string | null;
+  pinUrl: string | null;
 }
 
 export type MapStyleMode = "satellite" | "streets";
@@ -281,9 +283,13 @@ export default function TripMap({
 
         const photo = document.createElement("div");
         photo.className = "trip-pin-photo";
-        if (step.thumbUrl) {
+        if (step.pinUrl) {
           const img = document.createElement("img");
-          img.src = step.thumbUrl;
+          // Off-screen pins (most of them, on a long trip) wait until a
+          // flight brings them near the view, instead of every thumbnail
+          // loading with the page.
+          img.loading = "lazy";
+          img.src = step.pinUrl;
           img.alt = "";
           photo.appendChild(img);
         } else {
@@ -343,6 +349,9 @@ export default function TripMap({
       // Rise to the globe, then fade HeavenScene in on its top edge.
       const camera = heavenCamera(map, steps, step);
       const reveal = () => {
+        // Only once the camera is actually up at the globe: a move this
+        // flight cut off also ends with a "moveend", down at street level.
+        if (Math.abs(map.getZoom() - camera.zoom!) > 0.05) return;
         setPlacement(heavenPlacement(map));
         setRevealedId(step.id);
       };

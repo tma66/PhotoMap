@@ -21,30 +21,6 @@ export function BackChevronIcon({
   );
 }
 
-export function CardsIcon({
-  size = 18,
-  color = "#00293D",
-}: {
-  size?: number;
-  color?: string;
-}) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke={color}
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="2" y="4" width="14" height="18" rx="2" />
-      <rect x="8" y="2" width="14" height="18" rx="2" />
-    </svg>
-  );
-}
-
 // Map pin with a pencil — Lucide's "map-pin-pen" (ISC license).
 export function EditLocationIcon({
   size = 18,

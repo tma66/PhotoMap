@@ -22,6 +22,11 @@ import {
 } from "@/lib/heaven";
 import TripView_ from "@/components/TripView";
 
+// Carousel cards on screen when the page opens get their blur placeholder
+// inline; every other photo's arrives right after (see TripView.tsx), which
+// keeps a long trip's page — mostly base64 placeholders otherwise — small.
+const INLINE_PLACEHOLDER_STEPS = 3;
+
 interface PageProps {
   params: Promise<{ slug: string; n: string }>;
 }
@@ -92,7 +97,7 @@ export default async function TripPage({ params }: PageProps) {
   const countryCodes = JSON.parse(trip.countryCodes) as string[];
   const durationDays = tripDurationDays(trip.startDate, trip.endDate);
 
-  const steps: StepView[] = trip.steps.map((step) => {
+  const steps: StepView[] = trip.steps.map((step, stepIndex) => {
     const heaven = isHeaven(step); // see src/lib/heaven.ts
     return {
       id: step.id,
@@ -106,6 +111,7 @@ export default async function TripPage({ params }: PageProps) {
         : (countryByAlpha2(step.countryCode)?.name ?? ""),
       flag: heaven ? HEAVEN_BADGE : countryCodeToFlagEmoji(step.countryCode),
       heaven,
+      pinUrl: step.media[0] ? mediaUrl(slug, step.media[0].hash, "pin") : null,
       dateLabel: formatDayMonth(step.arrivedAt),
       weatherIcon: weatherCodeToIcon(step.weatherCode),
       weatherTempF: step.weatherTempF,
@@ -120,7 +126,10 @@ export default async function TripPage({ params }: PageProps) {
         displayUrl: mediaUrl(slug, m.hash, "display"),
         videoUrl: m.type === "VIDEO" ? mediaUrl(slug, m.hash, "video") : null,
         durationSec: m.durationSec,
-        placeholder: i === 0 ? m.placeholder : null,
+        placeholder:
+          i === 0 && stepIndex < INLINE_PLACEHOLDER_STEPS
+            ? m.placeholder
+            : null,
       })),
     };
   });

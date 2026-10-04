@@ -22,6 +22,9 @@ const execFileAsync = promisify(execFile);
 const THUMB_WIDTH = 400;
 // Home cards and trip-selector tiles: ~450px wide on screen, sharp at 2x.
 const CARD_WIDTH = 800;
+// Map pins: 44px circles, sharp at 3x. A long trip zoomed out shows every
+// pin at once, and decoded full thumbnails there ran a phone out of memory.
+const PIN_WIDTH = 132;
 const DISPLAY_WIDTH = 1600;
 
 interface MediaDerivative {
@@ -47,6 +50,7 @@ function derivativePaths(cacheDir: string, hash: string) {
   return {
     thumb: path("thumb.jpg"),
     card: path("card.jpg"),
+    pin: path("pin.jpg"),
     display: path("display.jpg"),
     video: path("video.mp4"),
     meta: path("meta.json"),
@@ -92,20 +96,31 @@ export async function saveSourceIndex(cacheDir: string): Promise<void> {
     await writeFile(join(cacheDir, "sources.json"), JSON.stringify(index));
 }
 
-/** Card-size copy, made from the display JPEG — backfills caches written
- * before the card size existed without redoing HEIC conversion. */
-async function ensureCard(
-  displayPath: string,
-  cardPath: string,
+/** A smaller copy of an existing derivative, if missing — backfills caches
+ * written before that size existed without redoing HEIC conversion. */
+async function ensureResized(
+  fromPath: string,
+  toPath: string,
+  width: number,
+  quality: number,
 ): Promise<void> {
   try {
-    await access(cardPath);
+    await access(toPath);
   } catch {
-    await sharp(displayPath)
-      .resize({ width: CARD_WIDTH, withoutEnlargement: true })
-      .jpeg({ quality: 80, mozjpeg: true })
-      .toFile(cardPath);
+    await sharp(fromPath)
+      .resize({ width, withoutEnlargement: true })
+      .jpeg({ quality, mozjpeg: true })
+      .toFile(toPath);
   }
+}
+
+async function ensureCardAndPin(
+  paths: ReturnType<typeof derivativePaths>,
+): Promise<void> {
+  await Promise.all([
+    ensureResized(paths.display, paths.card, CARD_WIDTH, 80),
+    ensureResized(paths.thumb, paths.pin, PIN_WIDTH, 75),
+  ]);
 }
 
 /**
@@ -134,7 +149,7 @@ async function heicToJpegBuffer(absPath: string): Promise<Buffer> {
 const HEIC_EXT = new Set([".heic", ".heif"]);
 
 /** Resizes an already-decoded image buffer into `cacheDir/<hash>-thumb.jpg`,
- * `-card.jpg` and `-display.jpg`, plus a tiny inline blur placeholder — shared by
+ * `-pin.jpg`, `-card.jpg` and `-display.jpg`, plus a tiny inline blur placeholder — shared by
  * processImage (the source photo itself) and processVideo (an extracted
  * poster frame). Doesn't write the `-meta.json` cache file itself, since
  * processVideo has an extra field (durationSec) to merge in first. */
@@ -153,10 +168,11 @@ async function writeResizedDerivatives(
       .jpeg({ quality, mozjpeg: true })
       .toFile(path);
 
-  const [, , , placeholderBuf] = await Promise.all([
+  const [, , , , placeholderBuf] = await Promise.all([
     resized(DISPLAY_WIDTH, 82, paths.display),
     resized(CARD_WIDTH, 80, paths.card),
     resized(THUMB_WIDTH, 75, paths.thumb),
+    resized(PIN_WIDTH, 75, paths.pin),
     image
       .clone()
       .resize({ width: 24 })
@@ -192,7 +208,7 @@ export async function processImage(
 
   const cached = await readCachedMeta(paths.meta, [paths.display, paths.thumb]);
   if (cached) {
-    await ensureCard(paths.display, paths.card);
+    await ensureCardAndPin(paths);
     return { hash, ...cached };
   }
 
@@ -228,7 +244,7 @@ export async function processVideo(
     paths.thumb,
   ]);
   if (cached) {
-    await ensureCard(paths.display, paths.card);
+    await ensureCardAndPin(paths);
     return { hash, ...cached };
   }
 

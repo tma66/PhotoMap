@@ -35,10 +35,10 @@ export function dayNumber(date: Date, start: Date): number {
   return dateDay - startDay + 1;
 }
 
-/** Distinct place names across a trip's steps — steps are day-based now, so
- * several steps can share one city (e.g. a multi-day resort stay). */
-export function uniqueCityCount(steps: { locationName: string }[]): number {
-  return new Set(steps.map((s) => s.locationName).filter(Boolean)).size;
+/** Distinct cities across steps — by cityName, so several steps in one city
+ * (neighborhoods of it, or a multi-day stay) count once. */
+export function uniqueCityCount(steps: { cityName: string }[]): number {
+  return new Set(steps.map((s) => s.cityName).filter(Boolean)).size;
 }
 
 export function uniqueCountryCodes(steps: StepLike[]): string[] {

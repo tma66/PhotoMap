@@ -40,7 +40,6 @@ import { basename, join, extname, relative } from "node:path";
 import chokidar from "chokidar";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/db";
-import { downsample } from "../lib/geo";
 import {
   isImageExt,
   isVideoExt,
@@ -264,7 +263,7 @@ async function ingestTrip(slug: string): Promise<void> {
   // instead of a half-wiped/half-written one.
   await prisma.$transaction(
     async (tx) => {
-      // Wipe and recreate this folder's rows — cascades to Step/Media/TrackPoint.
+      // Wipe and recreate this folder's rows — cascades to Step/Media.
       await tx.trip.deleteMany({ where: { slug } });
       for (const trip of prepared) await writeTrip(tx, slug, overrides, trip);
     },
@@ -280,8 +279,8 @@ async function ingestTrip(slug: string): Promise<void> {
 
 type PreparedTrip = NonNullable<Awaited<ReturnType<typeof prepareTrip>>>;
 
-/** Everything for one trip that doesn't touch the DB: steps, stats, track
- * and photo derivatives. Null when no step could be placed (no GPS at all). */
+/** Everything for one trip that doesn't touch the DB: steps, stats and
+ * photo derivatives. Null when no step could be placed (no GPS at all). */
 async function prepareTrip(
   slug: string,
   number: number,
@@ -368,15 +367,6 @@ async function prepareTrip(
   const distanceKm = tripDistanceKm(stepInputs.filter((s) => !isHeaven(s)));
   const countryCodes = uniqueCountryCodes(stepInputs);
 
-  // Dense trail for the "actual travelled path" ground route, from every
-  // geotagged shot in time order.
-  const trackPoints = downsample(
-    media
-      .filter((m) => m.lat != null && m.lng != null)
-      .map((m) => ({ t: m.takenAt, lat: m.lat!, lng: m.lng! })),
-    500,
-  );
-
   // The expensive part (HEIC conversion + resize, video transcode, or a
   // cache hit's file reads) runs concurrently across every photo/video in
   // the trip, independent of the DB — processImage()/processVideo()
@@ -426,7 +416,6 @@ async function prepareTrip(
     endDate,
     distanceKm,
     countryCodes,
-    trackPoints,
     stepInputs,
     processed: unique,
   };
@@ -450,12 +439,6 @@ async function writeTrip(
       countryCodes: JSON.stringify(p.countryCodes),
     },
   });
-
-  if (p.trackPoints.length > 0) {
-    await tx.trackPoint.createMany({
-      data: p.trackPoints.map((t) => ({ tripId: trip.id, ...t })),
-    });
-  }
 
   // Batched inserts rather than a round trip per row.
   const createdSteps = await tx.step.createManyAndReturn({
@@ -532,6 +515,28 @@ async function fillWeatherOverrides(
   });
 }
 
+// Each photo's coord as of the last template run, so a changed coord's place
+// name and weather get re-derived (and nothing else is touched). Kept in the
+// cache, not trip.json, which stays exactly as hand-edited.
+const templateCoordsPath = (slug: string) =>
+  join(CACHE_DIR, slug, "template-coords.json");
+
+async function readTemplateCoords(
+  slug: string,
+): Promise<Record<string, string>> {
+  return readFile(templateCoordsPath(slug), "utf8")
+    .then((raw) => JSON.parse(raw) as Record<string, string>)
+    .catch(() => ({}));
+}
+
+async function writeTemplateCoords(
+  slug: string,
+  coords: Record<string, string>,
+): Promise<void> {
+  await mkdir(join(CACHE_DIR, slug), { recursive: true });
+  await writeFile(templateCoordsPath(slug), JSON.stringify(coords));
+}
+
 async function writePhotoTemplate(slug: string): Promise<void> {
   const tripDir = join(ASSETS_DIR, slug);
   const tripJsonPath = join(tripDir, "trip.json");
@@ -564,13 +569,7 @@ async function writePhotoTemplate(slug: string): Promise<void> {
       )
     : buildPhotoTemplate(media, overrides.photos);
 
-  // Each photo's coord as of the last run, so a changed coord's place name
-  // and weather get re-derived (and nothing else is touched). Kept in the
-  // cache, not trip.json, which stays exactly as hand-edited.
-  const coordsPath = join(CACHE_DIR, slug, "template-coords.json");
-  const lastCoords = await readFile(coordsPath, "utf8")
-    .then((raw) => JSON.parse(raw) as Record<string, string>)
-    .catch(() => ({}) as Record<string, string>);
+  const lastCoords = await readTemplateCoords(slug);
   const refreshed = refreshChangedCoords(photos, lastCoords, WEATHER_ENABLED);
   if (refreshed.length > 0) {
     console.log(
@@ -598,8 +597,7 @@ async function writePhotoTemplate(slug: string): Promise<void> {
         pending.has(e.file) ? (lastCoords[e.file] ?? "") : e.coord!,
       ]),
   );
-  await mkdir(join(CACHE_DIR, slug), { recursive: true });
-  await writeFile(coordsPath, JSON.stringify(coords));
+  await writeTemplateCoords(slug, coords);
 
   const days = dayGroups(photos).reduce(
     (n, byDay) => n + Object.keys(byDay).length,
@@ -700,15 +698,11 @@ async function moveStep(stepId: string, coord: string): Promise<void> {
     JSON.stringify(overrides, null, 2) + "\n",
   );
   // Keep the template's coord record in step, as a template run would.
-  const coordsPath = join(CACHE_DIR, slug, "template-coords.json");
-  const lastCoords = await readFile(coordsPath, "utf8")
-    .then((raw) => JSON.parse(raw) as Record<string, string>)
-    .catch(() => ({}) as Record<string, string>);
+  const lastCoords = await readTemplateCoords(slug);
   for (const f of files) {
     lastCoords[f] = WEATHER_ENABLED ? coord : (lastCoords[f] ?? "");
   }
-  await mkdir(join(CACHE_DIR, slug), { recursive: true });
-  await writeFile(coordsPath, JSON.stringify(lastCoords));
+  await writeTemplateCoords(slug, lastCoords);
   console.log(`[ingest] ${slug}: moved ${files.length} photo(s) to ${coord}`);
 
   allMedia.sort((a, b) => a.takenAt.getTime() - b.takenAt.getTime());
@@ -838,7 +832,7 @@ async function main(): Promise<void> {
 
   if (rebuild) {
     console.log("[ingest] --rebuild: wiping database");
-    await prisma.trip.deleteMany(); // cascades to Step/Media/TrackPoint
+    await prisma.trip.deleteMany(); // cascades to Step/Media
   }
 
   await ingestAll(onlySlug);

@@ -4,6 +4,7 @@ import {
   percentOfWorldSeen,
   tripDistanceKm,
   tripDurationDays,
+  uniqueCityCount,
   uniqueCountryCodes,
 } from "@/lib/stats";
 
@@ -76,5 +77,17 @@ describe("percentOfWorldSeen", () => {
     const small = percentOfWorldSeen(["MC"]); // Monaco, tiny
     const big = percentOfWorldSeen(["RU"]); // Russia, huge
     expect(big).toBeGreaterThan(small);
+  });
+});
+
+describe("uniqueCityCount", () => {
+  it("counts each cityName once, ignoring blanks", () => {
+    const steps = [
+      { cityName: "San Francisco" },
+      { cityName: "San Francisco" },
+      { cityName: "Oakland" },
+      { cityName: "" },
+    ];
+    expect(uniqueCityCount(steps)).toBe(2);
   });
 });
