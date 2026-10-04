@@ -11,6 +11,10 @@ npm-debug.log*
 prisma/generated/
 public/maplibre/
 public/pika-profile.png
+# Home-screen icons are made from that photo, so they stay local too.
+public/icon-*.png
+src/app/icon.png
+src/app/apple-icon.png
 .claude/
 tsconfig.tsbuildinfo
 docs/

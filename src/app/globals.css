@@ -51,6 +51,16 @@ body {
   }
 }
 
+/* iOS 26+ blurs the top edge of an installed home-screen app (system
+   chrome, no way to turn it off), so headers start below it there. */
+@supports (-webkit-touch-callout: none) {
+  @media (display-mode: standalone) {
+    .safe-top {
+      padding-top: calc(env(safe-area-inset-top) + 1.5rem);
+    }
+  }
+}
+
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }

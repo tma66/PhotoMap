@@ -6,7 +6,11 @@ export const metadata: Metadata = {
   description: "Follow the trip.",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "black-translucent",
+    title: "PhotoMap",
+    // Opaque: on iOS 26, "black-translucent" blurs the top of the installed
+    // app and sizes it one status bar short, leaving a white band at the
+    // bottom (WebKit bug 301108). Safari ignores this setting.
+    statusBarStyle: "black",
   },
 };
 
