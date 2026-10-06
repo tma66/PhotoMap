@@ -428,9 +428,10 @@ export default function TripMap({
       if (isPetTrip) {
         const el = document.createElement("div");
         el.className = "walking-pet";
-        // Cartoons of the pet (public/pet/): walking, and out the window of
-        // a car between cities — .walking-pet-car shows which.
-        for (const name of ["walk", "car"]) {
+        // Cartoons of the pet (public/pet/): standing, running (legs
+        // animated) while it moves, and out the window of a car between
+        // cities — .walking-pet-moving/-car show which.
+        for (const name of ["walk", "run", "car"]) {
           const img = el.appendChild(document.createElement("img"));
           img.src = `/pet/${name}.svg`;
           img.alt = "";

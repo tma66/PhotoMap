@@ -167,19 +167,24 @@ body {
   transition: opacity 0.4s;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
 }
-.walking-pet-walk-img {
-  display: block;
+.walking-pet img {
+  display: none;
+}
+.walking-pet-walk-img,
+.walking-pet-run-img {
   width: 44px;
 }
 .walking-pet-car-img {
-  display: none;
   width: 76px;
 }
-.walking-pet-car .walking-pet-walk-img {
-  display: none;
-}
+.walking-pet .walking-pet-walk-img,
+.walking-pet-moving .walking-pet-run-img,
 .walking-pet-car .walking-pet-car-img {
   display: block;
+}
+.walking-pet-moving .walking-pet-walk-img,
+.walking-pet-car .walking-pet-run-img {
+  display: none;
 }
 .walking-pet-east img {
   transform: scaleX(-1);
