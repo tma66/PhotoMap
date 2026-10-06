@@ -5,6 +5,17 @@ import type { StepView } from "@/lib/trip-view";
 import { BackChevronIcon, SpeakerIcon } from "./icons";
 
 const PHOTO_DURATION_S = 5;
+// A press held longer than this is a pause (hold to look), not a tap — its
+// release resumes the current photo instead of advancing.
+const HOLD_MS = 250;
+const MAX_ZOOM = 4;
+// Pinched back out to (nearly) this, it settles to the unzoomed photo.
+const UNZOOM_BELOW = 1.05;
+
+const mid = (a: { x: number; y: number }, b: { x: number; y: number }) => ({
+  midX: (a.x + b.x) / 2,
+  midY: (a.y + b.y) / 2,
+});
 const SETTLE_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
 // The settle/complete animation runs at roughly this speed rather than a
 // fixed duration, so it covers however much distance is actually left from
@@ -147,6 +158,98 @@ export default function StepStory({
   // a vertical swipe-to-close or a plain tap) — decided on the first move
   // past a small jitter deadzone, then fixed for the rest of that touch.
   const isHorizontalDragRef = useRef(false);
+  // When the current press began, so a long hold's release isn't read as a
+  // tap by the tap zones below (see HOLD_MS).
+  const pressStartRef = useRef(0);
+  // (0 = no touch, e.g. a mouse click, which is always a tap.)
+  const wasHold = () =>
+    pressStartRef.current > 0 &&
+    performance.now() - pressStartRef.current > HOLD_MS;
+
+  // Pinch-zoom on the current photo/video, built in rather than left to the
+  // browser's page zoom — which the Home Screen app doesn't allow, and whose
+  // pinch the swipe-to-close check below misread as a swipe down. While
+  // zoomed the story stays paused, one finger pans, and taps/swipes are off
+  // until it's pinched back out.
+  const zoomLayerRef = useRef<HTMLDivElement>(null);
+  const zoomRef = useRef({ scale: 1, x: 0, y: 0 });
+  const gestureRef = useRef<
+    | { kind: "pinch"; dist: number; midX: number; midY: number }
+    | { kind: "pan"; px: number; py: number }
+    | null
+  >(null);
+  // The zoom when the current gesture began, which it's applied on top of.
+  const gestureZoomRef = useRef({ scale: 1, x: 0, y: 0 });
+  const isTap = () => zoomRef.current.scale === 1 && !wasHold();
+
+  const applyZoom = (scale: number, x: number, y: number, animate = false) => {
+    const el = zoomLayerRef.current;
+    const box = containerRef.current;
+    if (!el || !box) return;
+    // No panning past the zoomed photo's edges.
+    const maxX = ((scale - 1) * box.clientWidth) / 2;
+    const maxY = ((scale - 1) * box.clientHeight) / 2;
+    x = Math.min(maxX, Math.max(-maxX, x));
+    y = Math.min(maxY, Math.max(-maxY, y));
+    zoomRef.current = { scale, x, y };
+    el.style.transition = animate ? `transform 250ms ${SETTLE_EASE}` : "none";
+    el.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+  };
+
+  // Touch point relative to the story's center (the zoom's origin).
+  const fromCenter = (x: number, y: number) => {
+    const r = containerRef.current!.getBoundingClientRect();
+    return { x: x - r.left - r.width / 2, y: y - r.top - r.height / 2 };
+  };
+
+  const startGesture = (touches: React.TouchList) => {
+    gestureZoomRef.current = zoomRef.current;
+    const [a, b] = [touches[0]!, touches[1]];
+    gestureRef.current = b
+      ? {
+          kind: "pinch",
+          dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+          ...mid(
+            fromCenter(a.clientX, a.clientY),
+            fromCenter(b.clientX, b.clientY),
+          ),
+        }
+      : { kind: "pan", px: a.clientX, py: a.clientY };
+  };
+
+  const moveGesture = (touches: React.TouchList) => {
+    const g = gestureRef.current;
+    const z = gestureZoomRef.current;
+    const [a, b] = [touches[0]!, touches[1]];
+    if (g?.kind === "pan") {
+      applyZoom(z.scale, z.x + a.clientX - g.px, z.y + a.clientY - g.py);
+    } else if (g?.kind === "pinch" && b) {
+      const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      const scale = Math.min(MAX_ZOOM, Math.max(1, (z.scale * dist) / g.dist));
+      const m = mid(
+        fromCenter(a.clientX, a.clientY),
+        fromCenter(b.clientX, b.clientY),
+      );
+      // Keeps the spot that was under the fingers under them, moving with
+      // the pinch's midpoint.
+      const k = scale / z.scale;
+      applyZoom(
+        scale,
+        m.midX - (g.midX - z.x) * k,
+        m.midY - (g.midY - z.y) * k,
+      );
+    }
+  };
+
+  // Stops the browser's own pinch (Safari's page zoom) from also kicking in
+  // — touch-action alone isn't always honored by iOS for pinches.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const block = (e: Event) => e.preventDefault();
+    el.addEventListener("gesturestart", block);
+    return () => el.removeEventListener("gesturestart", block);
+  }, []);
 
   // Drags the current/prev/next media layers together like an iOS photo
   // swipe — dx applied on top of each layer's resting offset (the
@@ -239,16 +342,39 @@ export default function StepStory({
   return (
     <div
       ref={containerRef}
-      className="fixed inset-0 z-50 bg-black overflow-hidden"
-      style={{ maxWidth: 480, margin: "0 auto" }}
+      // No text selection, copy/save callout or context menu on a long
+      // press — holding is how the story is paused.
+      className="fixed inset-0 z-50 bg-black overflow-hidden select-none"
+      style={{
+        maxWidth: 480,
+        margin: "0 auto",
+        WebkitTouchCallout: "none",
+        touchAction: "none",
+      }}
+      onContextMenu={(e) => e.preventDefault()}
       onTouchStart={(e) => {
+        // A second finger, or any touch while zoomed, is a zoom/pan — not
+        // a tap or swipe, so that handling (below) is called off.
+        if (e.touches.length > 1 || zoomRef.current.scale > 1) {
+          if (touchStart.current) setDragLayers(0);
+          touchStart.current = null;
+          isHorizontalDragRef.current = false;
+          setPaused(true);
+          startGesture(e.touches);
+          return;
+        }
         const t = e.touches[0]!;
+        pressStartRef.current = performance.now();
         touchStart.current = { x: t.clientX, y: t.clientY };
         lastMoveRef.current = { x: t.clientX, t: performance.now() };
         isHorizontalDragRef.current = false;
         setPaused(true);
       }}
       onTouchMove={(e) => {
+        if (gestureRef.current) {
+          moveGesture(e.touches);
+          return;
+        }
         const start = touchStart.current;
         if (!start) return;
         const t = e.touches[0]!;
@@ -266,6 +392,18 @@ export default function StepStory({
         lastMoveRef.current = { x: t.clientX, t: performance.now() };
       }}
       onTouchEnd={(e) => {
+        if (gestureRef.current) {
+          gestureRef.current = null;
+          if (zoomRef.current.scale < UNZOOM_BELOW) {
+            // Pinched back out: settle onto the photo and carry on.
+            applyZoom(1, 0, 0, true);
+            setPaused(false);
+          } else if (e.touches.length > 0) {
+            // A finger still down keeps panning from here.
+            startGesture(e.touches);
+          }
+          return;
+        }
         const start = touchStart.current;
         touchStart.current = null;
         if (!start) {
@@ -421,18 +559,21 @@ export default function StepStory({
         className="absolute inset-0"
         style={{ transform: "translateX(0%)" }}
       >
-        {media.type === "VIDEO" && media.videoUrl ? (
-          // key remounts on every media change so autoplay actually
-          // (re)triggers, and so the poster-fade state below resets per clip.
-          <VideoWithPoster
-            key={media.hash}
-            src={media.videoUrl}
-            poster={media.displayUrl}
-            muted={videoMuted}
-          />
-        ) : (
-          <StoryPhoto media={media} />
-        )}
+        <div ref={zoomLayerRef} className="w-full h-full">
+          {media.type === "VIDEO" && media.videoUrl ? (
+            // key remounts on every media change so autoplay actually
+            // (re)triggers, and so the poster-fade state below resets per clip.
+            <VideoWithPoster
+              key={media.hash}
+              src={media.videoUrl}
+              poster={media.displayUrl}
+              muted={videoMuted}
+              paused={paused}
+            />
+          ) : (
+            <StoryPhoto media={media} />
+          )}
+        </div>
       </div>
       <div
         ref={nextLayerRef}
@@ -445,12 +586,12 @@ export default function StepStory({
       {/* Tap zones */}
       <button
         aria-label="Previous"
-        onClick={goPrev}
+        onClick={() => isTap() && goPrev()}
         className="absolute left-0 top-0 bottom-0 w-1/3 z-10"
       />
       <button
         aria-label="Next"
-        onClick={goNext}
+        onClick={() => isTap() && goNext()}
         className="absolute right-0 top-0 bottom-0 w-2/3 z-10"
       />
 
@@ -499,15 +640,26 @@ function VideoWithPoster({
   src,
   poster,
   muted,
+  paused,
 }: {
   src: string;
   poster: string;
   muted: boolean;
+  paused: boolean;
 }) {
   const [playing, setPlaying] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  // Holds still alongside the progress bar while the story is held.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (paused) video.pause();
+    else video.play().catch(() => {});
+  }, [paused]);
   return (
     <div className="relative w-full h-full bg-black overflow-hidden">
       <video
+        ref={videoRef}
         src={src}
         poster={poster}
         preload="auto"
@@ -560,6 +712,7 @@ function StoryPhoto({ media }: { media: StepView["media"][number] }) {
       src={media.displayUrl}
       alt=""
       decoding="async"
+      draggable={false}
       className="w-full h-full object-contain bg-black bg-contain bg-center bg-no-repeat"
       style={
         media.placeholder
