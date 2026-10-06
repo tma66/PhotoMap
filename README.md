@@ -14,10 +14,16 @@ NFC tag on a fridge magnet works great).
   with no manual trip-building.
 - Full-screen story view (photos + video, swipe between steps, tap-to-unmute)
   and a day scrubber over a live map (satellite or streets), with dotted
-  route lines between cities that you can toggle off.
+  route lines between cities that you can toggle off. Each city-to-city
+  trip is drawn once per direction, gently curved, so trips back and forth
+  don't pile up on top of each other.
 - Fix a step's location right on the trip page: search for a place or drag
   the map under a pin, and every photo in that step moves there.
 - A 3D auto-rotating globe on the home page showing every trip.
+- Installable on an iPhone via Safari's **Add to Home Screen**, opening
+  full-screen like an app. Put your own icons at `public/icon-192.png`,
+  `public/icon-512.png`, `src/app/icon.png` and `src/app/apple-icon.png`
+  (gitignored).
 - Runs entirely from your own machine, with no account and no third-party storage.
   An optional free Mapbox token upgrades the map tiles; everything works
   without one.

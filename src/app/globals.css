@@ -160,6 +160,42 @@ body {
   opacity: 1;
 }
 
+/* The pet walking from pin to pin on a pet's trip (components/TripMap.tsx). */
+.walking-pet {
+  pointer-events: none;
+  z-index: 20;
+  transition: opacity 0.4s;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
+.walking-pet-walk-img {
+  display: block;
+  width: 44px;
+}
+.walking-pet-car-img {
+  display: none;
+  width: 76px;
+}
+.walking-pet-car .walking-pet-walk-img {
+  display: none;
+}
+.walking-pet-car .walking-pet-car-img {
+  display: block;
+}
+.walking-pet-east img {
+  transform: scaleX(-1);
+}
+.walking-pet-moving img {
+  animation: pet-bob 0.3s ease-in-out infinite alternate;
+}
+.walking-pet-hidden {
+  opacity: 0;
+}
+@keyframes pet-bob {
+  to {
+    translate: 0 -4px;
+  }
+}
+
 /* Paradise above the globe for a step at 0,0 (components/HeavenScene.tsx).
    The anchor rests on the globe's top edge; the scene fades in on it
    once the camera has pulled back to the globe. */

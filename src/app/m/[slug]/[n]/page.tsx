@@ -97,6 +97,10 @@ export default async function TripPage({ params }: PageProps) {
   const countryCodes = JSON.parse(trip.countryCodes) as string[];
   const durationDays = tripDurationDays(trip.startDate, trip.endDate);
 
+  // A pet's trip that ends in heaven wears its paw on every step, not just
+  // the last one.
+  const endsInHeaven = trip.steps.length > 0 && isHeaven(trip.steps.at(-1)!);
+
   const steps: StepView[] = trip.steps.map((step, stepIndex) => {
     const heaven = isHeaven(step); // see src/lib/heaven.ts
     return {
@@ -109,7 +113,9 @@ export default async function TripPage({ params }: PageProps) {
       countryName: heaven
         ? HEAVEN_SUBTITLE
         : (countryByAlpha2(step.countryCode)?.name ?? ""),
-      flag: heaven ? HEAVEN_BADGE : countryCodeToFlagEmoji(step.countryCode),
+      flag: endsInHeaven
+        ? HEAVEN_BADGE
+        : countryCodeToFlagEmoji(step.countryCode),
       heaven,
       pinUrl: step.media[0] ? mediaUrl(slug, step.media[0].hash, "pin") : null,
       dateLabel: formatDayMonth(step.arrivedAt),
@@ -137,8 +143,10 @@ export default async function TripPage({ params }: PageProps) {
   const cityCount = uniqueCityCount(steps.filter((s) => !s.heaven));
 
   const isMultiTrip = tripsInFolder > 1;
-  const flags = countryCodes.map(countryCodeToFlagEmoji);
-  const endsInHeaven = steps.at(-1)?.heaven ?? false;
+  // A trip ending in heaven shows its paw wherever the flags would go.
+  const flags = endsInHeaven
+    ? [HEAVEN_BADGE]
+    : countryCodes.map(countryCodeToFlagEmoji);
   const view: TripView = {
     // In a folder of several trips, the date tells them apart ("EDC May
     // 2024", matching its tile on the selector).
@@ -151,11 +159,10 @@ export default async function TripPage({ params }: PageProps) {
     zoomName: zoomName(slug, number),
     owner: { name: profile.name, avatarUrl: profile.avatar },
     flags,
-    titleFlags: endsInHeaven ? [HEAVEN_BADGE] : flags,
     statsLabel: `${durationDays} day${durationDays === 1 ? "" : "s"} · ${cityCount} ${cityCount === 1 ? "city" : "cities"} · ${formatDistance(trip.distanceKm)}`,
     startDateLabel: formatBookendDate(trip.startDate),
     endCard: endsInHeaven
-      ? { label: HEAVEN_END_LABEL, dateLabel: null, flags: [HEAVEN_BADGE] }
+      ? { label: HEAVEN_END_LABEL, dateLabel: null, flags }
       : {
           label: "Trip finished",
           dateLabel: formatBookendDate(trip.endDate),

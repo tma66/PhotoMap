@@ -122,7 +122,7 @@ export default function TripView({ trip }: { trip: TripViewData }) {
         title={trip.title}
         backHref={trip.backHref}
         owner={trip.owner}
-        flags={trip.titleFlags}
+        flags={trip.flags}
         statsLabel={trip.statsLabel}
         mapStyleMode={mapStyleMode}
         onToggleMapStyleMode={() =>

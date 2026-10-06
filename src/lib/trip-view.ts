@@ -46,8 +46,6 @@ export interface TripView {
   zoomName: string; // matches the tile that opens it — see page-transition.ts
   owner: { name: string; avatarUrl: string | null };
   flags: string[];
-  /** Next to the title in the header: the paw, for a trip ending in heaven. */
-  titleFlags: string[];
   statsLabel: string; // "28 days · 6 cities · 4,099 km"
   startDateLabel: string; // "SUN, AUG 16, 2026" — trip-started bookend card
   /** The trip-finished bookend card. A trip ending in heaven (see

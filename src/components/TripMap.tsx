@@ -4,8 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./maplibre-worker";
-import { buildRouteLegs, legsToGeoJSON, type RouteStep } from "@/lib/route";
-import { haversineKm } from "@/lib/geo";
+import {
+  buildRouteLegs,
+  curvedArc,
+  legsToGeoJSON,
+  type RouteStep,
+} from "@/lib/route";
+import { haversineKm, type LatLng } from "@/lib/geo";
 import { isHeaven } from "@/lib/heaven";
 import HeavenScene from "./HeavenScene";
 import {
@@ -93,6 +98,85 @@ function heavenPlacement(map: maplibregl.Map): { top: number; width: number } {
   return { top, width: Math.min(clientWidth * 0.92, radius * 2.3) };
 }
 const LONG_FLIGHT_KM = 300; // same cutoff ingest uses for a flight leg
+// The camera's zoom at a step. MapLibre lays lines out per whole zoom
+// level and stretches them in between, so dashes (and paw prints) grow
+// while a flight zooms in and snap back to their shortest the moment it
+// lands on a whole level. Landing a hair below one keeps them at the longer
+// length they arrive with. Imagery is unaffected: raster tiles are picked by
+// rounding, so this still shows zoom-13 tiles.
+const STEP_ZOOM = 12.999;
+
+// A pet's trip (one that ends in heaven, see src/lib/heaven.ts) gets a trail
+// of paw prints instead of the dashed route, and the pet itself walking
+// from pin to pin.
+
+// One paw print, toes up, for the trail's symbol layer.
+function drawPaw(color: string): ImageData {
+  const ctx = document.createElement("canvas").getContext("2d")!;
+  ctx.canvas.width = ctx.canvas.height = 40;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(20, 27, 10, 8.5, 0, 0, Math.PI * 2);
+  for (const [x, y] of [
+    [8, 15],
+    [15, 8],
+    [25, 8],
+    [32, 15],
+  ] as const) {
+    ctx.moveTo(x + 4.2, y);
+    ctx.arc(x, y, 4.2, 0, Math.PI * 2);
+  }
+  ctx.fill();
+  return ctx.getImageData(0, 0, 40, 40);
+}
+
+// Walks the pet from where it is now to `to` along the same curve as the
+// trail, in step with the camera flying there: as far along the arc
+// as the camera is along its own way. Rides a car instead when `drive`
+// (moving to another city). Returns a function that stops it where it is.
+function walkPet(
+  map: maplibregl.Map,
+  pet: maplibregl.Marker,
+  to: LatLng,
+  drive: boolean,
+): () => void {
+  const from = pet.getLngLat();
+  const km = haversineKm(from, to);
+  if (km < 0.05) {
+    pet.setLngLat([to.lng, to.lat]);
+    return () => {};
+  }
+  const path = curvedArc(from, to, 48);
+  const el = pet.getElement();
+  el.classList.toggle("walking-pet-car", drive);
+  // Both drawings face left; flipped when heading east.
+  el.classList.toggle("walking-pet-east", to.lng > from.lng);
+  el.classList.add("walking-pet-moving");
+
+  const cameraFrom = map.getCenter();
+  const cameraKm = haversineKm(cameraFrom, to);
+  const move = () => {
+    const left = haversineKm(map.getCenter(), to);
+    const t = cameraKm > 0 ? Math.min(1, Math.max(0, 1 - left / cameraKm)) : 1;
+    const at = t * (path.length - 1);
+    const a = path[Math.floor(at)]!;
+    const b = path[Math.min(path.length - 1, Math.floor(at) + 1)]!;
+    const f = at - Math.floor(at);
+    pet.setLngLat([a.lng + (b.lng - a.lng) * f, a.lat + (b.lat - a.lat) * f]);
+  };
+  const stop = () => {
+    map.off("move", move);
+    map.off("moveend", arrive);
+    el.classList.remove("walking-pet-moving", "walking-pet-car");
+  };
+  function arrive() {
+    stop();
+    pet.setLngLat([to.lng, to.lat]);
+  }
+  map.on("move", move);
+  map.on("moveend", arrive);
+  return stop;
+}
 
 // Raster layers shown per style, bottom to top. The satellite labels overlay
 // isn't needed on streets, whose tiles carry their own labels.
@@ -197,6 +281,12 @@ export default function TripMap({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
+  const heavenStep = steps.find(isHeaven);
+  const isPetTrip = heavenStep != null;
+  // The walking pet on a pet's trip (see walkPet), once the map has loaded.
+  const petRef = useRef<maplibregl.Marker | null>(null);
+  // The city the pet is in (or heading to), to tell a drive from a walk.
+  const petCityRef = useRef<string | null>(null);
   // Read when the route layer is added on "load", which can come after the
   // visitor already toggled it.
   const showRouteRef = useRef(showRoute);
@@ -223,7 +313,7 @@ export default function TripMap({
       container: containerRef.current,
       style: buildMapStyle(styleMode),
       center: [start.lng, start.lat],
-      zoom: 13,
+      zoom: STEP_ZOOM,
       attributionControl: false,
       // Imagery doesn't change while a page is open — don't re-request
       // tiles just because their cache lifetime ran out.
@@ -261,20 +351,43 @@ export default function TripMap({
       const geojson = legsToGeoJSON(legs);
 
       map.addSource("route", { type: "geojson", data: geojson });
-      map.addLayer({
-        // Ground and flight legs render identically (same dashed style
-        // throughout the trip) — one layer, no filter needed.
-        id: "route",
-        type: "line",
-        source: "route",
-        layout: { visibility: showRouteRef.current ? "visible" : "none" },
-        paint: {
-          "line-color": routeColorFor(styleMode),
-          "line-width": 4,
-          "line-dasharray": [1.5, 1.5],
-          "line-opacity": 0.9,
-        },
-      });
+      if (isPetTrip) {
+        map.addImage("paw", drawPaw(routeColorFor(styleMode)), {
+          pixelRatio: 2,
+        });
+        map.addLayer({
+          id: "route",
+          type: "symbol",
+          source: "route",
+          layout: {
+            visibility: showRouteRef.current ? "visible" : "none",
+            "symbol-placement": "line",
+            "symbol-spacing": 26,
+            "icon-image": "paw",
+            "icon-size": 0.7,
+            // Toes point along the direction of travel.
+            "icon-rotate": 90,
+            "icon-rotation-alignment": "map",
+            "icon-allow-overlap": true,
+            "icon-ignore-placement": true,
+          },
+          paint: { "icon-opacity": 0.9 },
+        });
+      } else
+        map.addLayer({
+          // Ground and flight legs render identically (same dashed style
+          // throughout the trip) — one layer, no filter needed.
+          id: "route",
+          type: "line",
+          source: "route",
+          layout: { visibility: showRouteRef.current ? "visible" : "none" },
+          paint: {
+            "line-color": routeColorFor(styleMode),
+            "line-width": 4,
+            "line-dasharray": [3, 3],
+            "line-opacity": 0.9,
+          },
+        });
 
       for (const step of steps) {
         if (isHeaven(step)) continue; // shown above the globe instead
@@ -312,6 +425,27 @@ export default function TripMap({
         markers.set(step.id, marker);
       }
 
+      if (isPetTrip) {
+        const el = document.createElement("div");
+        el.className = "walking-pet";
+        // Cartoons of the pet (public/pet/): walking, and out the window of
+        // a car between cities — .walking-pet-car shows which.
+        for (const name of ["walk", "car"]) {
+          const img = el.appendChild(document.createElement("img"));
+          img.src = `/pet/${name}.svg`;
+          img.alt = "";
+          img.className = `walking-pet-${name}-img`;
+        }
+        el.classList.toggle("walking-pet-hidden", isHeaven(start));
+        // Beside the pin's top-right, not over its photo.
+        petRef.current = new maplibregl.Marker({
+          element: el,
+          offset: [26, -22],
+        })
+          .setLngLat([start.lng, start.lat])
+          .addTo(map);
+      }
+
       // The highlight effect below runs on mount too, but markers don't
       // exist yet at that point (they're created here, once the map style
       // has finished loading) — apply the initial selection's highlight
@@ -329,6 +463,7 @@ export default function TripMap({
       resizeObserver.disconnect();
       map.remove();
       mapRef.current = null;
+      petRef.current = null;
       markers.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- map is built once from the initial steps
@@ -344,6 +479,8 @@ export default function TripMap({
     const map = mapRef.current;
     const step = steps.find((s) => s.id === activeStepId);
     if (!step || !map) return;
+    const pet = petRef.current;
+    pet?.getElement().classList.toggle("walking-pet-hidden", isHeaven(step));
 
     if (isHeaven(step)) {
       // Rise to the globe, then fade HeavenScene in on its top edge.
@@ -372,14 +509,20 @@ export default function TripMap({
     const hideHeaven = () => setRevealedId(null);
     map.once("movestart", hideHeaven);
     let flightTimer: ReturnType<typeof setTimeout> | undefined;
+    let stopWalk: (() => void) | undefined;
 
+    const drive = petCityRef.current !== step.cityName;
+    petCityRef.current = step.cityName;
+    if (hidden || isScrubbing || leavingHeaven) {
+      pet?.setLngLat([step.lng, step.lat]);
+    }
     if (hidden) {
       // Nobody can see a flight — jump straight there, loading only the
       // destination's tiles (ready for when the map shows again) instead of
       // every zoom level along the way.
       map.jumpTo({
         center: [step.lng, step.lat],
-        zoom: 13,
+        zoom: STEP_ZOOM,
         padding: NO_PADDING,
       });
     } else if (isScrubbing) {
@@ -395,7 +538,7 @@ export default function TripMap({
         () =>
           map.flyTo({
             center: [step.lng, step.lat],
-            zoom: 13,
+            zoom: STEP_ZOOM,
             duration: HEAVEN_FLIGHT_MS,
             padding: NO_PADDING,
           }),
@@ -408,13 +551,18 @@ export default function TripMap({
       const far = haversineKm({ lat, lng }, step) > LONG_FLIGHT_KM;
       map.flyTo({
         center: [step.lng, step.lat],
-        zoom: 13,
+        zoom: STEP_ZOOM,
         duration: far ? 5000 : 2500,
         padding: NO_PADDING,
       });
+      // After flyTo, not before: cutting short a flight still in the air
+      // fires its "moveend" right away, which would end this walk at once.
+      // The new flight's first move comes on the next frame.
+      if (pet) stopWalk = walkPet(map, pet, step, drive);
     }
     return () => {
       clearTimeout(flightTimer);
+      stopWalk?.();
       map.off("movestart", hideHeaven);
     };
     // `hidden` is read, not a dependency: showing the map again shouldn't
@@ -479,12 +627,14 @@ export default function TripMap({
         BASE_LAYERS[styleMode].includes(id) ? "visible" : "none",
       );
     }
-    if (map.getLayer("route")) {
+    if (isPetTrip) {
+      if (map.hasImage("paw")) {
+        map.updateImage("paw", drawPaw(routeColorFor(styleMode)));
+      }
+    } else if (map.getLayer("route")) {
       map.setPaintProperty("route", "line-color", routeColorFor(styleMode));
     }
-  }, [styleMode]);
-
-  const heavenStep = steps.find(isHeaven);
+  }, [styleMode, isPetTrip]);
 
   return (
     // MapLibre mutates the element it's given (adds its own .maplibregl-map
