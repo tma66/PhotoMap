@@ -17,7 +17,7 @@ export default function TripSelector({ data }: { data: TripSelectorData }) {
   return (
     <div
       data-page={data.path}
-      className="h-[100dvh] overflow-y-auto no-scrollbar bg-ps-bg safe-top px-4 pb-8"
+      className="h-[100dvh] overflow-y-auto no-scrollbar bg-ps-bg safe-top px-4 pb-[calc(env(safe-area-inset-bottom)+2rem)]"
     >
       <div className="flex items-center justify-center gap-1.5 mb-1">
         {data.owner.avatarUrl ? (
@@ -36,7 +36,7 @@ export default function TripSelector({ data }: { data: TripSelectorData }) {
         </span>
       </div>
 
-      <div className="relative flex items-center justify-center h-12">
+      <div className="relative flex items-center justify-center min-h-12">
         <Link
           href="/"
           aria-label="Back"
@@ -47,12 +47,12 @@ export default function TripSelector({ data }: { data: TripSelectorData }) {
         >
           <BackChevronIcon size={28} color="#ffffff" />
         </Link>
-        <h1 className="text-ps-navy-text font-bold text-xl leading-tight text-center px-12">
+        <h1 className="text-ps-navy-text font-bold text-xl leading-tight text-center text-balance px-14">
           {data.title}
         </h1>
       </div>
 
-      <div className="mt-4 flex flex-col gap-3 max-w-[480px] mx-auto">
+      <div className="mt-4 flex flex-col gap-4 max-w-[480px] mx-auto">
         {data.tiles.map((tile) => (
           <Link
             key={tile.href}
@@ -67,7 +67,7 @@ export default function TripSelector({ data }: { data: TripSelectorData }) {
           >
             {/* overflow-hidden on the inner wrapper, not the link — box-shadow
                 on the same box as overflow-hidden gets clipped away. */}
-            <div className="absolute inset-0 rounded-3xl overflow-hidden border border-white/15">
+            <div className="absolute inset-0 rounded-3xl overflow-hidden border border-white/15 bg-ps-navy bg-clip-padding">
               {tile.coverUrl && (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
@@ -78,8 +78,8 @@ export default function TripSelector({ data }: { data: TripSelectorData }) {
                   className="absolute inset-0 w-full h-full object-cover"
                 />
               )}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
-              <div className="absolute bottom-3 left-3 right-3">
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent" />
+              <div className="absolute bottom-4 left-4 right-4">
                 <p className="text-white font-bold text-lg leading-tight drop-shadow">
                   {tile.title}
                 </p>

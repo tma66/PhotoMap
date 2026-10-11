@@ -66,17 +66,20 @@ export default async function TripSelectorPage({ params }: PageProps) {
     title: trips[0]!.title,
     path: `/m/${slug}`,
     owner: { name: profile.name, avatarUrl: profile.avatar },
-    tiles: trips.map((trip) => {
-      const coverHash = coverHashes.get(trip);
-      const days = tripDurationDays(trip.startDate, trip.endDate);
-      return {
-        href: `/m/${slug}/${trip.number}`,
-        zoomName: zoomName(slug, trip.number),
-        coverUrl: coverHash ? mediaUrl(slug, coverHash, "card") : null,
-        title: formatMonthYear(trip.startDate),
-        subtitleLabel: `${days} DAY${days === 1 ? "" : "S"} · ${formatDistance(trip.distanceKm)}`,
-      };
-    }),
+    // Newest trip first.
+    tiles: [...trips]
+      .sort((a, b) => b.startDate.getTime() - a.startDate.getTime())
+      .map((trip) => {
+        const coverHash = coverHashes.get(trip);
+        const days = tripDurationDays(trip.startDate, trip.endDate);
+        return {
+          href: `/m/${slug}/${trip.number}`,
+          zoomName: zoomName(slug, trip.number),
+          coverUrl: coverHash ? mediaUrl(slug, coverHash, "card") : null,
+          title: formatMonthYear(trip.startDate),
+          subtitleLabel: `${days} DAY${days === 1 ? "" : "S"} · ${formatDistance(trip.distanceKm)}`,
+        };
+      }),
   };
 
   return <TripSelector data={data} />;
