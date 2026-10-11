@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { StepView } from "@/lib/trip-view";
+import { prefersReducedMotion } from "@/lib/reduced-motion";
 import { BackChevronIcon, SpeakerIcon } from "./icons";
 
 const PHOTO_DURATION_S = 5;
@@ -81,13 +82,6 @@ interface StepStoryProps {
   getCardRect?: (stepId: string) => DOMRect | null;
   onClose: () => void;
   onStepIndexChange: (index: number, enterAtEnd?: boolean) => void;
-}
-
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
 }
 
 // Card corner radius (rounded-3xl, see StepCarousel.tsx) to animate toward
@@ -289,6 +283,15 @@ export default function StepStory({
     zoom(el, FULL_SCREEN, onCard(el, rect)).finished.then(onClose, onClose);
   };
 
+  // Escape closes the story, as it would any dialog.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeWithAnimation();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
   const goNext = () => {
     if (mediaIndex < step.media.length - 1) {
       setMediaIndex((i) => i + 1);
@@ -342,6 +345,9 @@ export default function StepStory({
   return (
     <div
       ref={containerRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={step.title}
       // No text selection, copy/save callout or context menu on a long
       // press — holding is how the story is paused.
       className="fixed inset-0 z-50 bg-black overflow-hidden select-none"

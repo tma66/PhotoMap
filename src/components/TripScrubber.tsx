@@ -114,12 +114,15 @@ const TripScrubber = forwardRef<TripScrubberHandle, TripScrubberProps>(
         <div
           ref={trackRef}
           role="slider"
+          aria-label="Day"
           tabIndex={0}
           aria-valuemin={1}
           aria-valuemax={dayNumbers.length}
           aria-valuenow={activeIndex + 1}
           aria-valuetext={`Day ${dayNumbers[activeIndex]}`}
-          className="absolute inset-x-4 inset-y-0 touch-none cursor-pointer"
+          // The `before:` box makes the tappable strip 44px tall without
+          // changing the 36px pill.
+          className="absolute inset-x-4 inset-y-0 touch-none cursor-pointer before:absolute before:inset-x-0 before:-inset-y-1 before:content-['']"
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}

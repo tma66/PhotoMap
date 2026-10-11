@@ -12,6 +12,7 @@ import {
 } from "@/lib/route";
 import { haversineKm, type LatLng } from "@/lib/geo";
 import { isHeaven } from "@/lib/heaven";
+import { prefersReducedMotion } from "@/lib/reduced-motion";
 import HeavenScene from "./HeavenScene";
 import {
   GLOBE_SKY,
@@ -482,6 +483,9 @@ export default function TripMap({
     if (!step || !map) return;
     const pet = petRef.current;
     pet?.getElement().classList.toggle("walking-pet-hidden", isHeaven(step));
+    // Reduced motion: the camera (and the pet) cut straight to each step
+    // instead of flying there.
+    const still = hidden || prefersReducedMotion();
 
     if (isHeaven(step)) {
       // Rise to the globe, then fade HeavenScene in on its top edge.
@@ -497,7 +501,7 @@ export default function TripMap({
       // the flight can be interrupted or replaced (e.g. by the story view
       // jumping the hidden map), and the visitor can drag the globe.
       map.on("moveend", reveal);
-      if (hidden || isScrubbing) map.jumpTo(camera);
+      if (still || isScrubbing) map.jumpTo(camera);
       else map.flyTo({ ...camera, duration: HEAVEN_FLIGHT_MS });
       return () => {
         map.off("moveend", reveal);
@@ -506,7 +510,7 @@ export default function TripMap({
 
     // Leaving heaven: its scene (no longer the active step's) is fading
     // out — the camera waits for that before heading back down.
-    const leavingHeaven = revealedId != null && !hidden && !isScrubbing;
+    const leavingHeaven = revealedId != null && !still && !isScrubbing;
     const hideHeaven = () => setRevealedId(null);
     map.once("movestart", hideHeaven);
     let flightTimer: ReturnType<typeof setTimeout> | undefined;
@@ -514,10 +518,10 @@ export default function TripMap({
 
     const drive = petCityRef.current !== step.cityName;
     petCityRef.current = step.cityName;
-    if (hidden || isScrubbing || leavingHeaven) {
+    if (still || isScrubbing || leavingHeaven) {
       pet?.setLngLat([step.lng, step.lat]);
     }
-    if (hidden) {
+    if (still) {
       // Nobody can see a flight — jump straight there, loading only the
       // destination's tiles (ready for when the map shows again) instead of
       // every zoom level along the way.

@@ -6,6 +6,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import "./maplibre-worker";
 import type { HomeGlobeStep } from "@/lib/home-view";
 import { GLOBE_SKY, labelsSource, satelliteSource } from "@/lib/map-style";
+import { prefersReducedMotion } from "@/lib/reduced-motion";
 
 interface GlobeMapProps {
   steps: HomeGlobeStep[];
@@ -200,7 +201,9 @@ export default function GlobeMap({
       rotateRef.current = null;
     };
     map.on("load", () => {
-      rotateRef.current = requestAnimationFrame(tick);
+      if (!prefersReducedMotion()) {
+        rotateRef.current = requestAnimationFrame(tick);
+      }
     });
     map
       .getCanvas()

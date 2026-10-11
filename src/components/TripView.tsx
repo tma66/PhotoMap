@@ -100,7 +100,7 @@ export default function TripView({ trip }: { trip: TripViewData }) {
   };
 
   return (
-    <div
+    <main
       data-page={trip.path}
       data-zoom-page={trip.zoomName}
       className="relative h-[100dvh] overflow-hidden bg-ps-navy"
@@ -202,6 +202,6 @@ export default function TripView({ trip }: { trip: TripViewData }) {
           }}
         />
       )}
-    </div>
+    </main>
   );
 }

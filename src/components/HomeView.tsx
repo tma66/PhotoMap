@@ -63,7 +63,7 @@ export default function HomeView({ data }: { data: HomeData }) {
   }, []);
 
   return (
-    <div
+    <main
       data-page="/"
       className="relative h-[100dvh] overflow-hidden bg-[#04101c]"
     >
@@ -113,9 +113,9 @@ export default function HomeView({ data }: { data: HomeData }) {
                   )}
                 </div>
                 <div>
-                  <p className="font-bold text-2xl">{data.profile.name}</p>
+                  <h1 className="font-bold text-2xl">{data.profile.name}</h1>
                   {data.profile.bio && (
-                    <p className="text-sm text-ps-muted-2 mt-0.5">
+                    <p className="text-sm text-ps-muted mt-0.5">
                       {data.profile.bio}
                     </p>
                   )}
@@ -134,10 +134,13 @@ export default function HomeView({ data }: { data: HomeData }) {
                     key={t}
                     type="button"
                     onClick={() => setTab(t)}
-                    className={`flex-1 py-1.5 rounded-full transition-colors ${
+                    aria-pressed={tab === t}
+                    // The `before:` box makes the tappable area 44px tall
+                    // without changing the 32px segment.
+                    className={`relative flex-1 py-1.5 rounded-full transition-colors before:absolute before:inset-x-0 before:-inset-y-1.5 before:content-[''] ${
                       tab === t
                         ? "bg-white text-ps-navy-text shadow-soft"
-                        : "text-ps-muted-2"
+                        : "text-ps-muted"
                     }`}
                   >
                     {t === "trips" ? "Trips" : "Statistics"}
@@ -148,7 +151,7 @@ export default function HomeView({ data }: { data: HomeData }) {
               {tab === "trips" ? (
                 <div className="mt-3 flex flex-col gap-3 pb-8">
                   {data.tripCards.length === 0 && (
-                    <p className="text-sm text-ps-muted-2 py-6 text-center">
+                    <p className="text-sm text-ps-muted py-6 text-center">
                       Drop photos into a folder under <code>assets/</code> and
                       run the ingest script to see a trip here.
                     </p>
@@ -232,7 +235,7 @@ export default function HomeView({ data }: { data: HomeData }) {
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {data.stats.countryFlags.length === 0 && (
-                      <span className="text-sm text-ps-muted-2">None yet</span>
+                      <span className="text-sm text-ps-muted">None yet</span>
                     )}
                     {data.stats.countryFlags.map((flag) => (
                       <span
@@ -256,7 +259,7 @@ export default function HomeView({ data }: { data: HomeData }) {
                         key={label}
                         className="bg-white rounded-xl p-3 shadow-soft"
                       >
-                        <p className="text-ps-muted-2 text-xs">{label}</p>
+                        <p className="text-ps-muted text-xs">{label}</p>
                         <p className="font-bold">{value}</p>
                       </div>
                     ))}
@@ -267,7 +270,7 @@ export default function HomeView({ data }: { data: HomeData }) {
           </Drawer.Content>
         </Drawer.Portal>
       </Drawer.Root>
-    </div>
+    </main>
   );
 }
 
@@ -275,7 +278,7 @@ function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div>
       <p className="font-bold text-base">{value}</p>
-      <p className="text-[11px] text-ps-muted-2">{label}</p>
+      <p className="text-[11px] text-ps-muted">{label}</p>
     </div>
   );
 }

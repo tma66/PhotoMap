@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { mediaUrl } from "@/lib/media-url";
@@ -39,6 +40,19 @@ export async function generateStaticParams() {
     select: { slug: true, number: true },
   });
   return trips.map((t) => ({ slug: t.slug, n: String(t.number) }));
+}
+
+// The trip's own name in the browser tab and share sheet.
+export async function generateMetadata({
+  params,
+}: PageProps): Promise<Metadata> {
+  const { slug, n } = await params;
+  if (!/^[1-9]\d*$/.test(n)) return {};
+  const trip = await prisma.trip.findUnique({
+    where: { slug_number: { slug, number: Number(n) } },
+    select: { title: true },
+  });
+  return trip ? { title: `${trip.title} · PhotoMap` } : {};
 }
 
 export default async function TripPage({ params }: PageProps) {

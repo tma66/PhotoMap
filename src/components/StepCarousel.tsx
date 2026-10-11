@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { StepView, TripView } from "@/lib/trip-view";
 import { formatBookendDate } from "@/lib/format";
+import { prefersReducedMotion } from "@/lib/reduced-motion";
 import { EditLocationIcon } from "./icons";
 
 export interface StepCarouselHandle {
@@ -105,7 +106,7 @@ const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
         suppressScrollReport.current = true;
         container.scrollTo({
           left: targetLeft,
-          behavior: isScrubbing ? "auto" : "smooth",
+          behavior: isScrubbing || prefersReducedMotion() ? "auto" : "smooth",
         });
         if (suppressTimerRef.current != null) {
           clearTimeout(suppressTimerRef.current);
@@ -211,7 +212,11 @@ const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
                       loading="lazy"
                       decoding="async"
                       className="absolute inset-0 w-full h-full object-cover bg-cover"
-                      style={{ backgroundImage: `url(${cover.placeholder})` }}
+                      style={
+                        cover.placeholder
+                          ? { backgroundImage: `url(${cover.placeholder})` }
+                          : undefined
+                      }
                     />
                   )}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
@@ -241,7 +246,9 @@ const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
                 type="button"
                 onClick={() => onEditLocation(i)}
                 aria-label="Change location"
-                className="absolute bottom-2.5 right-2.5 w-9 h-9 rounded-full bg-white/90 shadow-soft flex items-center justify-center active:scale-95"
+                // The `before:` box widens the tappable area to 44px without
+                // changing the 36px circle.
+                className="absolute bottom-2.5 right-2.5 w-9 h-9 rounded-full bg-white/90 shadow-soft flex items-center justify-center active:scale-95 before:absolute before:-inset-1 before:content-['']"
               >
                 <EditLocationIcon size={18} />
               </button>

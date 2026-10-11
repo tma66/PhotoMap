@@ -22,3 +22,4 @@ tsconfig.tsbuildinfo
 docs/
 design-reference/
 CLAUDE.md
+.impeccable/
