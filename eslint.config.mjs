@@ -11,5 +11,6 @@ export default defineConfig([
     "data/**",
     "assets/**",
     "public/maplibre/**", // vendored copy, not our source — see scripts/copy-maplibre-worker.mjs
+    ".claude/**", // local tooling, not our source
   ]),
 ]);

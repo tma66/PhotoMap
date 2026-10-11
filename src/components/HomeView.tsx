@@ -14,10 +14,10 @@ const GlobeMap = dynamic(() => import("./GlobeMap"), { ssr: false });
 
 // A fixed pixel height (rather than a fraction of the drawer) so the
 // peeked drawer reliably reveals the profile row and the
-// Trips/Countries/Cities stats grid without a drag. The globe gets the same
-// value as its bottom padding so it recenters in the space this leaves
-// visible above the drawer, instead of staying centered on the full screen
-// height and leaving empty sky above it.
+// Trips/Countries/Cities stats grid without a drag. The globe gets the part
+// of it that actually shows (`visiblePeekPx`) as its bottom padding so it
+// recenters in the space left above the drawer, instead of staying centered
+// on the full screen height and leaving empty sky above it.
 const PEEK_HEIGHT_PX = 380;
 const SNAP_PEEK = `${PEEK_HEIGHT_PX}px`;
 // The sheet is 92% of the screen tall (`max-h-[92%]` below) but vaul places

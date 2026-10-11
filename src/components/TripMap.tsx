@@ -323,9 +323,11 @@ export default function TripMap({
       center: [start.lng, start.lat],
       zoom: STEP_ZOOM,
       attributionControl: false,
-      // Imagery doesn't change while a page is open — don't re-request
-      // tiles just because their cache lifetime ran out.
-      refreshExpiredTiles: false,
+      // `refreshExpiredTiles` stays on (the default): turning it off makes
+      // MapLibre load tiles through <img> and decode them on the main
+      // thread, which drops frames all through a flight. The cost is a
+      // re-request when a tile's cache lifetime ends (12h Mapbox, 24h Esri
+      // by their response headers, October 2026).
     });
     mapRef.current = map;
 

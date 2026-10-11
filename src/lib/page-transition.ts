@@ -16,6 +16,7 @@
 // (names from zoomName()).
 
 import type { MouseEvent } from "react";
+import { prefersReducedMotion } from "./reduced-motion";
 
 type Kind = "push" | "pop" | "zoom-in" | "zoom-out";
 type Navigate = (href: string, options?: { scroll?: boolean }) => void;
@@ -45,7 +46,7 @@ function canAnimate(): boolean {
   return (
     typeof document !== "undefined" &&
     "startViewTransition" in document &&
-    !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    !prefersReducedMotion()
   );
 }
 

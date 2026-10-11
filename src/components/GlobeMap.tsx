@@ -126,7 +126,11 @@ export default function GlobeMap({
       zoom,
       attributionControl: false,
       dragRotate: false,
-      refreshExpiredTiles: false, // see TripMap.tsx
+      // Imagery doesn't change while a page is open — don't re-request
+      // tiles just because their cache lifetime ran out. This costs
+      // main-thread tile decoding (see TripMap.tsx), which the slow rotation
+      // here doesn't show.
+      refreshExpiredTiles: false,
     });
     // Padding isn't a constructor option — apply it via jumpTo so the globe
     // recenters within the space above the peeked drawer, not the full
