@@ -20,6 +20,11 @@ const GlobeMap = dynamic(() => import("./GlobeMap"), { ssr: false });
 // height and leaving empty sky above it.
 const PEEK_HEIGHT_PX = 380;
 const SNAP_PEEK = `${PEEK_HEIGHT_PX}px`;
+// The sheet is 92% of the screen tall (`max-h-[92%]` below) but vaul places
+// the peek as if it were full height, so that missing 8% of the screen is cut
+// from what actually shows.
+const visiblePeekPx = (screenHeight: number) =>
+  PEEK_HEIGHT_PX - screenHeight * 0.08;
 const SNAP_FULL = 1;
 
 // The sheet's position, tab and scroll as the visitor left home for a trip.
@@ -69,7 +74,7 @@ export default function HomeView({ data }: { data: HomeData }) {
     >
       <GlobeMap
         steps={data.globeSteps}
-        bottomInset={PEEK_HEIGHT_PX}
+        bottomInset={visiblePeekPx}
         paused={snap === SNAP_FULL}
         onSelectStep={(tripId) => router.push(`/m/${tripId}`)}
       />
@@ -84,7 +89,7 @@ export default function HomeView({ data }: { data: HomeData }) {
       >
         <Drawer.Portal>
           <Drawer.Content
-            className={`${instantSheet ? "sheet-instant " : ""}fixed bottom-0 inset-x-2 z-30 mx-auto max-w-[480px] bg-ps-bg/95 rounded-t-3xl h-full max-h-[92%] flex flex-col outline-none shadow-soft`}
+            className={`${instantSheet ? "sheet-instant " : ""}fixed bottom-0 inset-x-2 z-30 mx-auto max-w-[480px] bg-ps-bg rounded-t-3xl h-full max-h-[92%] flex flex-col outline-none shadow-soft`}
           >
             <Drawer.Title className="sr-only">Profile</Drawer.Title>
             <Drawer.Handle
@@ -216,18 +221,22 @@ export default function HomeView({ data }: { data: HomeData }) {
                     You&apos;ve seen
                   </p>
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-2xl bg-ps-navy text-white p-4 h-28 flex flex-col justify-center shadow-soft">
-                      <p className="text-2xl font-bold">
-                        {data.stats.countries}
-                      </p>
-                      <p className="text-xs opacity-80">countries</p>
-                    </div>
-                    <div className="rounded-2xl bg-[#0b2a4a] text-white p-4 h-28 flex flex-col justify-center shadow-soft">
-                      <p className="text-2xl font-bold">
-                        {data.stats.percentOfWorld}%
-                      </p>
-                      <p className="text-xs opacity-80">of the world</p>
-                    </div>
+                    {(
+                      [
+                        [data.stats.countries, "countries"],
+                        [`${data.stats.percentOfWorld}%`, "of the world"],
+                        [data.stats.totalKmLabel, "travelled"],
+                        [data.stats.totalDays.toLocaleString("en-US"), "days"],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <div
+                        key={label}
+                        className="rounded-2xl bg-ps-navy text-white p-4 h-28 flex flex-col justify-center shadow-soft"
+                      >
+                        <p className="text-2xl font-bold">{value}</p>
+                        <p className="text-xs opacity-80">{label}</p>
+                      </div>
+                    ))}
                   </div>
 
                   <p className="text-sm font-semibold text-ps-muted mt-5 mb-2">
@@ -244,24 +253,6 @@ export default function HomeView({ data }: { data: HomeData }) {
                       >
                         {flag}
                       </span>
-                    ))}
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-3 mt-5 text-sm">
-                    {(
-                      [
-                        ["Distance", data.stats.totalKmLabel],
-                        ["Days", data.stats.totalDays],
-                        ["Cities", data.stats.totalCities],
-                      ] as const
-                    ).map(([label, value]) => (
-                      <div
-                        key={label}
-                        className="bg-white rounded-xl p-3 shadow-soft"
-                      >
-                        <p className="text-ps-muted text-xs">{label}</p>
-                        <p className="font-bold">{value}</p>
-                      </div>
                     ))}
                   </div>
                 </div>

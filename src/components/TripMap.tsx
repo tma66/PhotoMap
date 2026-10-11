@@ -185,6 +185,12 @@ const BASE_LAYERS: Record<MapStyleMode, string[]> = {
   satellite: ["satellite-low", "satellite", "labels"],
   streets: ["streets-low", "streets"],
 };
+// The streets tiles are toned down so the photos and pins stay the brightest
+// things on the map, and the white header text keeps some contrast.
+const STREETS_PAINT = {
+  "raster-saturation": -0.45,
+  "raster-brightness-max": 0.9,
+} as const;
 const ALL_BASE_LAYERS = [
   "satellite-low",
   "streets-low",
@@ -259,6 +265,7 @@ function buildMapStyle(styleMode: MapStyleMode): maplibregl.StyleSpecification {
           id,
           type: "raster",
           source: id,
+          paint: id.startsWith("streets") ? STREETS_PAINT : {},
           layout: {
             visibility: BASE_LAYERS[styleMode].includes(id)
               ? "visible"

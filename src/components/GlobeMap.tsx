@@ -5,17 +5,17 @@ import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./maplibre-worker";
 import type { HomeGlobeStep } from "@/lib/home-view";
-import { GLOBE_SKY, labelsSource, satelliteSource } from "@/lib/map-style";
+import { GLOBE_SKY, satelliteSource } from "@/lib/map-style";
 import { prefersReducedMotion } from "@/lib/reduced-motion";
 
 interface GlobeMapProps {
   steps: HomeGlobeStep[];
   onSelectStep?: (tripId: string) => void;
   /** Pixels of the container's bottom edge covered by an overlay (e.g. the
-   * peeked bottom sheet) — the globe recenters within the space above it
-   * instead of the full container, so it doesn't render half-hidden behind
-   * the overlay with empty sky above. */
-  bottomInset?: number;
+   * peeked bottom sheet), given the container's height — the globe recenters
+   * within the space above it instead of the full container, so it doesn't
+   * render half-hidden behind the overlay with empty sky above. */
+  bottomInset?: (containerHeight: number) => number;
   /** Stops the auto-rotate loop — e.g. while a fully-expanded sheet covers
    * the globe entirely, so nothing can see it rotate anyway. */
   paused?: boolean;
@@ -69,7 +69,6 @@ function darkStyle(): maplibregl.StyleSpecification {
     projection: { type: "globe" },
     sources: {
       satellite: satelliteSource(),
-      labels: labelsSource(),
     },
     layers: [
       {
@@ -88,12 +87,6 @@ function darkStyle(): maplibregl.StyleSpecification {
         source: "satellite",
         paint: { "raster-opacity": 0.9 },
       },
-      {
-        id: "labels",
-        type: "raster",
-        source: "labels",
-        paint: { "raster-opacity": 0.9 },
-      },
     ],
     sky: GLOBE_SKY,
   };
@@ -102,7 +95,7 @@ function darkStyle(): maplibregl.StyleSpecification {
 export default function GlobeMap({
   steps,
   onSelectStep,
-  bottomInset = 0,
+  bottomInset,
   paused = false,
 }: GlobeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -121,7 +114,8 @@ export default function GlobeMap({
     // pokes above the viewport — fit to the tighter of the container's
     // width and this available height, instead of a fixed zoom that clips
     // on short or narrow screens.
-    const availableHeight = container.clientHeight - bottomInset;
+    const inset = bottomInset?.(container.clientHeight) ?? 0;
+    const availableHeight = container.clientHeight - inset;
     const fitDiameter = Math.min(container.clientWidth, availableHeight);
     const zoom = zoomForGlobeDiameter(fitDiameter);
 
@@ -137,7 +131,7 @@ export default function GlobeMap({
     // Padding isn't a constructor option — apply it via jumpTo so the globe
     // recenters within the space above the peeked drawer, not the full
     // container, before the first paint.
-    map.jumpTo({ padding: { top: 0, bottom: bottomInset, left: 0, right: 0 } });
+    map.jumpTo({ padding: { top: 0, bottom: inset, left: 0, right: 0 } });
 
     // See TripMap.tsx for why this is needed: without it the map can stall
     // permanently at whatever size it read at construction time.

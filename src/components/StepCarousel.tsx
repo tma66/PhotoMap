@@ -10,7 +10,7 @@ import {
 import type { StepView, TripView } from "@/lib/trip-view";
 import { formatBookendDate } from "@/lib/format";
 import { prefersReducedMotion } from "@/lib/reduced-motion";
-import { EditLocationIcon } from "./icons";
+import { CameraIcon } from "./icons";
 
 export interface StepCarouselHandle {
   /** The on-screen rect of a step's card, or null if it's not currently
@@ -29,6 +29,9 @@ function todayLabel(): string {
   );
 }
 const noSubscribe = () => () => {};
+
+/** How long a card must be held before it counts as press-and-hold. */
+const HOLD_MS = 500;
 
 /** scrollLeft that puts `card` centered in `container`'s viewport. */
 function centeredScrollLeft(container: HTMLElement, card: HTMLElement): number {
@@ -77,6 +80,16 @@ const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
     // touch/scroll gesture (the classic "jerks back and forth" stutter).
     // CSS scroll-snap already settles the container on its own once they let go.
     const scrollOriginatedIndexChange = useRef(false);
+
+    // Press and hold a card to change its location. `heldRef` stops the tap
+    // that ends the hold from also opening the story.
+    const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const heldRef = useRef(false);
+    const cancelHold = () => {
+      if (holdTimer.current != null) clearTimeout(holdTimer.current);
+      holdTimer.current = null;
+    };
+    useEffect(() => cancelHold, []);
 
     useImperativeHandle(
       ref,
@@ -197,8 +210,28 @@ const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
             >
               <button
                 type="button"
-                onClick={() => onOpenStep(i)}
-                className="absolute inset-0 rounded-3xl text-left shadow-soft transition-transform active:scale-[0.98]"
+                onClick={() => {
+                  if (heldRef.current) {
+                    heldRef.current = false;
+                    return;
+                  }
+                  onOpenStep(i);
+                }}
+                // Scrolling the carousel fires pointercancel, which drops
+                // the hold.
+                onPointerDown={() => {
+                  heldRef.current = false;
+                  cancelHold();
+                  holdTimer.current = setTimeout(() => {
+                    heldRef.current = true;
+                    onEditLocation(i);
+                  }, HOLD_MS);
+                }}
+                onPointerUp={cancelHold}
+                onPointerCancel={cancelHold}
+                onPointerLeave={cancelHold}
+                onContextMenu={(e) => e.preventDefault()}
+                className="absolute inset-0 rounded-3xl text-left shadow-soft transition-transform active:scale-[0.98] select-none [-webkit-touch-callout:none]"
               >
                 {/* overflow-hidden lives on this inner wrapper, not the
                   button itself — box-shadow on the same box as
@@ -225,12 +258,13 @@ const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
                     {step.flag}
                   </span>
                   {step.media.length > 1 && (
-                    <span className="absolute top-2.5 right-2.5 bg-black/50 text-white text-[11px] font-semibold px-2 py-1 rounded-full">
-                      📷 {step.media.length}
+                    <span className="absolute top-2.5 right-2.5 bg-black/50 text-white text-[11px] font-semibold px-2 py-1 rounded-full flex items-center gap-1">
+                      <CameraIcon />
+                      {step.media.length}
                     </span>
                   )}
 
-                  <div className="absolute bottom-3 left-3 right-14">
+                  <div className="absolute bottom-3 left-3 right-3">
                     <p className="text-white font-bold text-base leading-tight drop-shadow">
                       {step.title}
                     </p>
@@ -240,17 +274,16 @@ const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
                   </div>
                 </div>
               </button>
-              {/* A sibling of the card's button, not inside it (no nested
-                  buttons). Opens LocationPicker — see TripView.tsx. */}
+              {/* Press-and-hold has no keyboard or screen-reader equivalent,
+                  so those get a hidden button. A sibling of the card's
+                  button, not inside it (no nested buttons). Opens
+                  LocationPicker — see TripView.tsx. */}
               <button
                 type="button"
                 onClick={() => onEditLocation(i)}
-                aria-label="Change location"
-                // The `before:` box widens the tappable area to 44px without
-                // changing the 36px circle.
-                className="absolute bottom-2.5 right-2.5 w-9 h-9 rounded-full bg-white/90 shadow-soft flex items-center justify-center active:scale-95 before:absolute before:-inset-1 before:content-['']"
+                className="sr-only"
               >
-                <EditLocationIcon size={18} />
+                Change location
               </button>
             </div>
           );
