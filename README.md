@@ -97,8 +97,8 @@ same. `cityName` (the biggest place within 25 km, so a neighborhood counts
 as its city) decides the dotted route lines: they only join consecutive
 steps in different cities, so type a different one to group or split steps.
 
-To fix a whole step's location, use the pin-and-pencil button on its card
-on the trip page: it writes the new `coord`, place names and weather to
+To fix a whole step's location, press and hold its card on the trip page:
+it writes the new `coord`, place names and weather to
 every photo in that step and updates the site in a second or two. **Anyone
 who can open the site can do this.**
 
@@ -155,8 +155,8 @@ about up front:
 
 - `NEXT_PUBLIC_MAPBOX_TOKEN`: optional, a free Mapbox account's
   URL-restricted **public** token, for nicer satellite/streets tiles and the
-  3D globe projection. Leave blank to fall back to keyless Esri tiles (lower
-  detail, no globe). **Changing this requires a rebuild** (`npm run build`),
+  place search when changing a step's location. Leave blank to fall back to
+  keyless Esri tiles (lower detail, no place search). **Changing this requires a rebuild** (`npm run build`),
   not just a restart, since Next.js inlines `NEXT_PUBLIC_*` vars into the
   client bundle at build time.
 - `INGEST_WEATHER=off`: skip fetching weather during
