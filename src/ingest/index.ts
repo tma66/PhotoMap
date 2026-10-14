@@ -33,6 +33,10 @@
 //     weather in trip.json, replacing what's there (for when weather.ts
 //     changes how it sums up a day). Nothing else in trip.json changes, and
 //     the old file is kept beside it as trip.json.<timestamp>.bak.
+//   npm run ingest -- --find-duplicates my-trip -- list one trip's (or,
+//     with no slug, every trip's) exact and near-duplicate photos within
+//     each trip (videos skipped) — see src/ingest/duplicates.ts. Report
+//     only: files, trip.json and the DB are left alone.
 
 process.on("unhandledRejection", (reason) => {
   console.error("Unhandled Rejection in ingest:", reason);
@@ -74,6 +78,7 @@ import {
   type PhotosBlock,
 } from "./photo-overrides";
 import { processImage, processVideo, saveSourceIndex } from "./media";
+import { findDuplicateGroups, perceptualHash } from "./duplicates";
 import { refreshSite } from "./site-refresh";
 import { fetchHistoricalWeather } from "./weather";
 import { tripDistanceKm, uniqueCountryCodes } from "../lib/stats";
@@ -406,7 +411,7 @@ async function prepareTrip(
   await saveSourceIndex(cacheDir);
 
   // Byte-identical copies (e.g. "IMG_1 (1).jpeg") share a content hash, which
-  // must be unique in the DB — keep the first, drop the rest.
+  // keys a trip's media URLs and placeholders — keep the first, drop the rest.
   const seenHashes = new Map<string, string>();
   const unique = processed.filter(({ job, derivative }) => {
     if (!derivative) return true;
@@ -859,6 +864,46 @@ async function ingestAll(onlySlug?: string): Promise<void> {
   }
 }
 
+/** Prints each trip's exact and near-duplicate photos (videos skipped).
+ * Report only: the files, trip.json and the DB are left as they are. */
+async function findDuplicates(slug: string): Promise<void> {
+  const overrides = await readTripOverrides(join(ASSETS_DIR, slug));
+  const { isMultiTrip, trips } = await listTrips(slug);
+  const cacheDir = join(CACHE_DIR, slug);
+  for (const { number, dir } of trips) {
+    const label = tripLabel(slug, number, isMultiTrip);
+    const photos = (await loadTaggedMedia(dir, overrides.photos)).filter(
+      (m) => m.kind === "photo",
+    );
+    // Hashed from the cached 400px thumbnail (made now if missing), which
+    // also spares decoding every HEIC original again.
+    const hashed = await mapWithConcurrency(photos, async (m) => {
+      try {
+        const { hash } = await processImage(m.sourcePath, cacheDir);
+        const thumb = await readFile(join(cacheDir, `${hash}-thumb.jpg`));
+        return {
+          file: basename(m.sourcePath),
+          contentHash: hash,
+          perceptualHash: await perceptualHash(thumb),
+        };
+      } catch (err) {
+        console.warn(`[duplicates] ${label}: can't read ${m.sourcePath}:`, err);
+        return null;
+      }
+    });
+    await saveSourceIndex(cacheDir);
+    const groups = findDuplicateGroups(hashed.filter((h) => h !== null));
+    console.log(
+      `[duplicates] ${label}: ${photos.length} photos, ${groups.length} duplicate group(s)`,
+    );
+    for (const g of groups) {
+      const how =
+        g.kind === "exact" ? "exact" : `near, distance ${g.maxDistance}`;
+      console.log(`  ${how}: ${g.files.join(", ")}`);
+    }
+  }
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
@@ -884,6 +929,15 @@ async function main(): Promise<void> {
       await ingestTrip(s);
     }
     await refreshSite();
+    await prisma.$disconnect();
+    return;
+  }
+
+  const duplicatesFlagIndex = args.indexOf("--find-duplicates");
+  if (duplicatesFlagIndex !== -1) {
+    const slug = args[duplicatesFlagIndex + 1];
+    const slugs = slug ? [slug] : await listTripSlugs();
+    for (const s of slugs) await findDuplicates(s);
     await prisma.$disconnect();
     return;
   }

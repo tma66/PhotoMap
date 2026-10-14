@@ -58,7 +58,7 @@ model Media {
   stepId      String
   type        String   @default("IMAGE") // IMAGE|VIDEO
   sourcePath  String   // relative path under assets/, never served directly
-  hash        String   @unique // content hash, used as cache filename
+  hash        String   // content hash, used as cache filename; unique per trip, not globally (two trips can share a photo)
   width       Int
   height      Int
   durationSec Float?

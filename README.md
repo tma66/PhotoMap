@@ -70,7 +70,11 @@ npm run build && npm start   # http://localhost:3000
    npm run ingest -- japan-2025      # just this trip
    npm run ingest                    # every trip
    npm run ingest -- --watch         # ingest, then keep watching assets/ for changes
+   npm run ingest -- --find-duplicates japan-2025   # list duplicate photos (omit the slug for every trip)
    ```
+   `--find-duplicates` only reports: exact copies, and the same picture
+   resized, re-compressed or converted (e.g. a HEIC and its exported JPEG),
+   within each trip. Similar shots (bursts) and videos aren't compared.
 
 ### Filling in gaps (no-GPS photos, wrong location, wrong weather)
 
