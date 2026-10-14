@@ -28,6 +28,11 @@
 //     the refreshed trip.json (and any photos removed from assets/) right
 //     away. The leading `--` is required (without it, npm won't forward the
 //     flag and just runs a plain ingest instead).
+//   npm run ingest -- --refresh-weather my-trip -- refetch one trip's
+//   npm run ingest -- --refresh-weather          -- ...or every trip's
+//     weather in trip.json, replacing what's there (for when weather.ts
+//     changes how it sums up a day). Nothing else in trip.json changes, and
+//     the old file is kept beside it as trip.json.<timestamp>.bak.
 
 process.on("unhandledRejection", (reason) => {
   console.error("Unhandled Rejection in ingest:", reason);
@@ -35,7 +40,14 @@ process.on("unhandledRejection", (reason) => {
 });
 
 import "./env"; // must stay the first import — see env.ts
-import { mkdir, readdir, stat, readFile, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  readdir,
+  stat,
+  readFile,
+  writeFile,
+} from "node:fs/promises";
 import { basename, join, extname, relative } from "node:path";
 import chokidar from "chokidar";
 import type { Prisma } from "@prisma/client";
@@ -488,31 +500,81 @@ async function writeTrip(
  * Fetches weather for any entry that has a `coord` but is still missing
  * `weatherTempF`/`weatherCode` — done here (network I/O) rather than in
  * `buildPhotoTemplate` (kept pure/offline) — so it's persisted to trip.json
- * once instead of being re-fetched on every regular ingest.
+ * once instead of being re-fetched on every regular ingest. With `replace`,
+ * refetches every entry instead, keeping the old value where a fetch fails.
+ * Returns how many entries' fetches failed.
  */
 async function fillWeatherOverrides(
   photos: PhotosBlock,
   media: TaggedMedia[],
-): Promise<void> {
+  replace = false,
+): Promise<number> {
   const takenAtByFile = new Map(
     media.map((m) => [basename(m.sourcePath), m.takenAt]),
   );
 
   const needsWeather = allEntries(photos).filter(
-    (entry) => entry.weatherTempF == null || entry.weatherCode == null,
+    (entry) =>
+      replace || entry.weatherTempF == null || entry.weatherCode == null,
   );
 
-  await mapWithConcurrency(needsWeather, async (entry) => {
-    const coord = parseCoord(entry.coord);
-    const takenAt = takenAtByFile.get(entry.file);
-    if (!coord || !takenAt || isHeaven(coord)) return;
+  // A day's photos are mostly at one spot: one request per place and day.
+  const fetches = new Map<string, ReturnType<typeof fetchHistoricalWeather>>();
+  let failed = 0;
 
-    const weather = await fetchHistoricalWeather(coord.lat, coord.lng, takenAt);
-    if (weather) {
-      entry.weatherTempF ??= weather.tempF;
-      entry.weatherCode ??= weather.code;
-    }
-  });
+  await mapWithConcurrency(
+    needsWeather,
+    async (entry) => {
+      const coord = parseCoord(entry.coord);
+      const takenAt = takenAtByFile.get(entry.file);
+      if (!coord || !takenAt || isHeaven(coord)) return;
+
+      const key = `${coord.lat.toFixed(4)},${coord.lng.toFixed(4)},${takenAt.toISOString().slice(0, 10)}`;
+      let fetching = fetches.get(key);
+      if (!fetching) {
+        fetching = fetchHistoricalWeather(coord.lat, coord.lng, takenAt);
+        fetches.set(key, fetching);
+      }
+      const weather = await fetching;
+      if (!weather) {
+        failed++;
+      } else if (replace) {
+        entry.weatherTempF = weather.tempF;
+        entry.weatherCode = weather.code;
+      } else {
+        entry.weatherTempF ??= weather.tempF;
+        entry.weatherCode ??= weather.code;
+      }
+    },
+    4, // one per core got some requests refused on a big trip
+  );
+  return failed;
+}
+
+async function refreshWeather(slug: string): Promise<void> {
+  const tripDir = join(ASSETS_DIR, slug);
+  const tripJsonPath = join(tripDir, "trip.json");
+  const overrides = await readTripOverrides(tripDir);
+  if (!overrides.photos) {
+    console.warn(`[ingest] ${slug}: no "photos" in trip.json, nothing to do`);
+    return;
+  }
+  const { trips } = await listTrips(slug);
+  const media = (
+    await Promise.all(
+      trips.map((t) => loadTaggedMedia(t.dir, overrides.photos)),
+    )
+  ).flat();
+
+  const stamp = new Date().toISOString().replace(/[-:]|\..*/g, "");
+  const backupPath = `${tripJsonPath}.${stamp}.bak`;
+  await copyFile(tripJsonPath, backupPath);
+
+  const failed = await fillWeatherOverrides(overrides.photos, media, true);
+  await writeFile(tripJsonPath, JSON.stringify(overrides, null, 2) + "\n");
+  console.log(
+    `[ingest] ${slug}: weather refreshed, ${failed} photo(s) kept their old weather (fetch failed); backup at ${backupPath}`,
+  );
 }
 
 // Each photo's coord as of the last template run, so a changed coord's place
@@ -819,6 +881,19 @@ async function main(): Promise<void> {
     const slugs = slug ? [slug] : await listTripSlugs();
     for (const s of slugs) {
       await writePhotoTemplate(s);
+      await ingestTrip(s);
+    }
+    await refreshSite();
+    await prisma.$disconnect();
+    return;
+  }
+
+  const weatherFlagIndex = args.indexOf("--refresh-weather");
+  if (weatherFlagIndex !== -1) {
+    const slug = args[weatherFlagIndex + 1];
+    const slugs = slug ? [slug] : await listTripSlugs();
+    for (const s of slugs) {
+      await refreshWeather(s);
       await ingestTrip(s);
     }
     await refreshSite();
