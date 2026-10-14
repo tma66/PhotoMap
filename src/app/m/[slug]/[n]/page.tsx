@@ -6,7 +6,7 @@ import { loadProfile } from "@/lib/profile";
 import {
   countryCodeToFlagEmoji,
   formatBookendDate,
-  formatDayMonth,
+  formatDayMonthYear,
   formatDistance,
   formatMonthYear,
   weatherCodeToIcon,
@@ -132,7 +132,7 @@ export default async function TripPage({ params }: PageProps) {
         : countryCodeToFlagEmoji(step.countryCode),
       heaven,
       pinUrl: step.media[0] ? mediaUrl(slug, step.media[0].hash, "pin") : null,
-      dateLabel: formatDayMonth(step.arrivedAt),
+      dateLabel: formatDayMonthYear(step.arrivedAt),
       weatherIcon: weatherCodeToIcon(step.weatherCode),
       weatherTempF: step.weatherTempF,
       lat: step.lat,

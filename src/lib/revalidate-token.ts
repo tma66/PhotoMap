@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-export const REVALIDATE_TOKEN_PATH = resolve(
+const REVALIDATE_TOKEN_PATH = resolve(
   /* turbopackIgnore: true */ "./data/revalidate-token",
 );
 

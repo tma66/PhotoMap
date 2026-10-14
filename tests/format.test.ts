@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   countryCodeToFlagEmoji,
-  formatDayMonth,
+  formatDayMonthYear,
   formatDistance,
   formatMonthYear,
   weatherCodeToIcon,
@@ -33,9 +33,11 @@ describe("weatherCodeToIcon", () => {
   });
 });
 
-describe("formatDayMonth", () => {
-  it("formats without a year", () => {
-    expect(formatDayMonth(new Date("2025-07-13T12:00:00Z"))).toMatch(/13/);
+describe("formatDayMonthYear", () => {
+  it("formats day, month and year", () => {
+    expect(formatDayMonthYear(new Date("2025-07-13T12:00:00Z"))).toBe(
+      "July 13, 2025",
+    );
   });
 
   it("reads the date in UTC regardless of the server's local timezone", () => {
@@ -45,7 +47,9 @@ describe("formatDayMonth", () => {
     // src/ingest/timezone.ts) — formatting this early-morning value without
     // pinning timeZone: "UTC" reinterpreted it in the server's own zone and
     // rolled it back to the previous calendar day.
-    expect(formatDayMonth(new Date("2026-08-18T01:40:39Z"))).toBe("August 18");
+    expect(formatDayMonthYear(new Date("2026-08-18T01:40:39Z"))).toBe(
+      "August 18, 2026",
+    );
   });
 });
 

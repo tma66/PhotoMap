@@ -20,8 +20,8 @@
 //     local calendar date (see src/ingest/timezone.ts) — real EXIF GPS
 //     photos get their coord/locationName/weather auto-filled with nothing
 //     to do by hand; GPS-less photos need a coord typed in, after which
-//     locationName/weather auto-fill too (once network-fetched, this is the
-//     only step that talks to the network — see src/ingest/photo-overrides.ts),
+//     locationName/weather auto-fill too (this and the site's --move-step
+//     are the only steps that fetch weather — see src/ingest/photo-overrides.ts),
 //     AND any photo whose local day was previously wrong (e.g. it only had
 //     mtime to go on) gets re-filed under the now-correct date. Each
 //     affected trip is then re-ingested into the DB, so the site reflects

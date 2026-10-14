@@ -10,10 +10,11 @@ export function formatDistance(km: number): string {
 // UTC" (see src/ingest/timezone.ts) — a real timezone name would double-shift
 // it. `timeZone: "UTC"` reads the encoded numbers back out as-is, regardless
 // of the server's own local timezone.
-export function formatDayMonth(date: Date): string {
+export function formatDayMonthYear(date: Date): string {
   return date.toLocaleDateString("en-US", {
     day: "numeric",
     month: "long",
+    year: "numeric",
     timeZone: "UTC",
   });
 }

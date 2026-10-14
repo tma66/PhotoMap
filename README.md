@@ -93,9 +93,13 @@ one with no EXIF date, which falls back to the file's date), move its entry
 under the right date and it's treated as taken that day. Change a `coord`
 and the next run re-derives that photo's `locationName`, `cityName` and
 weather; a value you typed yourself is kept as long as its coord stays the
-same. `cityName` (the biggest place within 25 km, so a neighborhood counts
-as its city) decides the dotted route lines: they only join consecutive
-steps in different cities, so type a different one to group or split steps.
+same. Weather is the daytime (9am–6pm) high and typical conditions; to
+refetch it for every photo, run `npm run ingest -- --refresh-weather [slug]`
+(replaces typed-in weather too; the old file is kept as
+`trip.json.<timestamp>.bak`). `cityName` (the biggest place within 25 km,
+so a neighborhood counts as its city) decides the dotted route lines: they
+only join consecutive steps in different cities, so type a different one to
+group or split steps.
 
 To fix a whole step's location, press and hold its card on the trip page:
 it writes the new `coord`, place names and weather to
@@ -160,8 +164,8 @@ about up front:
   not just a restart, since Next.js inlines `NEXT_PUBLIC_*` vars into the
   client bundle at build time.
 - `INGEST_WEATHER=off`: skip fetching weather during
-  `--photos-template` (weather is otherwise cached into `trip.json`, never
-  fetched during a normal ingest).
+  `--photos-template` and step-location changes (weather is otherwise cached
+  into `trip.json`, never fetched during a normal ingest).
 - `UNITS`: `km` or `mi`.
 - `SITE_URL`: where ingest reaches the running site to refresh its pages
   right after an ingest (default `http://localhost:3000`). Pages are
