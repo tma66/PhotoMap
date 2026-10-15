@@ -19,7 +19,9 @@
 //     trip.json "photos" block: one entry per photo, grouped by its own
 //     local calendar date (see src/ingest/timezone.ts) — real EXIF GPS
 //     photos get their coord/locationName/weather auto-filled with nothing
-//     to do by hand; GPS-less photos need a coord typed in, after which
+//     to do by hand; a GPS-less photo with no coord takes the nearest-in-time
+//     coord on its date (none on a copy-date photo, or a day with no coords),
+//     else needs one typed in, after which
 //     locationName/weather auto-fill too (this and the site's --move-step
 //     are the only steps that fetch weather — see src/ingest/photo-overrides.ts),
 //     AND an entry filed under a date other than its file's recorded one
@@ -36,6 +38,9 @@
 //     weather in trip.json, replacing what's there (for when weather.ts
 //     changes how it sums up a day). Nothing else in trip.json changes, and
 //     the old file is kept beside it as trip.json.<timestamp>.bak.
+//   npm run ingest -- --rename old-slug new-slug -- rename a trip folder (its
+//     URL) and its cache folder, drop the old name's DB rows and ingest the
+//     new one; nothing is re-encoded. NFC tags with the old URL need rewriting.
 //   npm run ingest -- --find-duplicates my-trip -- list one trip's (or,
 //     with no slug, every trip's) exact and near-duplicate photos within
 //     each trip (videos skipped) — see src/ingest/duplicates.ts. Report
@@ -51,6 +56,7 @@ import {
   copyFile,
   mkdir,
   readdir,
+  rename,
   stat,
   readFile,
   writeFile,
@@ -93,6 +99,7 @@ import { refreshSite } from "./site-refresh";
 import { fetchHistoricalWeather } from "./weather";
 import { tripDistanceKm, uniqueCountryCodes } from "../lib/stats";
 import { HEAVEN_PLACE, heavenName, isHeaven } from "../lib/heaven";
+import { SAFE_SLUG } from "../lib/media-path-safety";
 
 const ASSETS_DIR = process.env.ASSETS_DIR ?? "./assets";
 const CACHE_DIR = process.env.CACHE_DIR ?? "./data/cache";
@@ -307,6 +314,13 @@ function applyFiledDates(
  * listTrips); each becomes its own Trip row. */
 async function ingestTrip(slug: string): Promise<void> {
   const tripDir = join(ASSETS_DIR, slug);
+  if (!(await exists(tripDir))) {
+    const { count } = await prisma.trip.deleteMany({ where: { slug } });
+    if (count > 0) {
+      console.log(`[ingest] ${slug}: folder gone, removed from the site`);
+    }
+    return;
+  }
   console.log(`[ingest] ${slug}: scanning...`);
 
   const overrides = await readTripOverrides(tripDir);
@@ -751,6 +765,24 @@ async function writePhotoTemplate(slug: string): Promise<void> {
       )
     : sortedTemplate(media, mediaByTrip[0]!.number);
 
+  // A coordless photo takes the coord of the nearest-in-time photo on its
+  // date that has one (names and weather fill in below). Copy-date (mtime)
+  // photos have no real time, so they're left for a hand-typed coord; a
+  // blank coord over the file's own GPS stays, as for moved entries above.
+  for (const t of mediaByTrip) {
+    for (const e of allEntries(tripBlock(photos, isMultiTrip, t.number))) {
+      if (e.coord != null) continue;
+      const m = t.media.find((m) => basename(m.sourcePath) === e.file);
+      if (!m || m.takenAtIsMtime || m.gps) continue;
+      const coord = nearestCoord(t.media, m, new Map(), true);
+      if (!coord) continue;
+      e.coord = coord;
+      console.log(
+        `[ingest] ${tripLabel(slug, t.number, isMultiTrip)} ${e.file}: no coord, took nearest same-day photo's (${coord})`,
+      );
+    }
+  }
+
   const lastCoords = await readTemplateCoords(slug);
   const refreshed = refreshChangedCoords(photos, lastCoords, WEATHER_ENABLED);
   if (refreshed.length > 0) {
@@ -985,6 +1017,15 @@ async function moveStep(stepId: string, coord: string): Promise<void> {
 
 async function ingestAll(onlySlug?: string): Promise<void> {
   const slugs = onlySlug ? [onlySlug] : await listTripSlugs();
+  // Trips whose folder is gone (ingestTrip drops them) — unless assets/
+  // looks empty, e.g. an unmounted drive, which would wipe every trip.
+  if (!onlySlug && slugs.length > 0) {
+    const inDb = await prisma.trip.findMany({
+      select: { slug: true },
+      distinct: ["slug"],
+    });
+    for (const { slug } of inDb) if (!slugs.includes(slug)) slugs.push(slug);
+  }
   for (const slug of slugs) {
     try {
       await ingestTrip(slug);
@@ -1037,8 +1078,69 @@ async function findDuplicates(slug: string): Promise<void> {
   }
 }
 
+const exists = (path: string) =>
+  stat(path).then(
+    () => true,
+    () => false,
+  );
+
+/** Renames a trip folder and its cache folder (so media derivatives and
+ * template-coords.json carry over), drops the old name's DB rows and
+ * ingests the new one. Files inside the folder aren't touched. */
+async function renameTrip(from: string, to: string): Promise<void> {
+  if (!SAFE_SLUG.test(to)) {
+    throw new Error(`"${to}": use only letters, digits, - and _`);
+  }
+  const fromDir = join(ASSETS_DIR, from);
+  const toDir = join(ASSETS_DIR, to);
+  if (!(await stat(fromDir).catch(() => null))?.isDirectory()) {
+    throw new Error(`${fromDir} is not a folder`);
+  }
+  for (const path of [toDir, join(CACHE_DIR, to)]) {
+    if (await exists(path)) throw new Error(`${path} already exists`);
+  }
+  // Cache first: a running --watch ingests the new folder ~2 s after it
+  // appears, and would otherwise re-encode everything into a fresh cache.
+  const fromCache = join(CACHE_DIR, from);
+  const movedCache = await exists(fromCache);
+  if (movedCache) await rename(fromCache, join(CACHE_DIR, to));
+  try {
+    await rename(fromDir, toDir);
+  } catch (err) {
+    if (movedCache) await rename(join(CACHE_DIR, to), fromCache);
+    throw err;
+  }
+  console.log(`[ingest] renamed ${from} -> ${to}`);
+  // sources.json is keyed by source path; re-key it so files aren't re-hashed.
+  const sourcesPath = join(CACHE_DIR, to, "sources.json");
+  const sources = await readFile(sourcesPath, "utf8").then(
+    (raw) => JSON.parse(raw) as Record<string, string>,
+    () => null,
+  );
+  if (sources) {
+    const prefix = `${fromDir}/`;
+    const rekeyed = Object.entries(sources).map(([key, hash]) => [
+      key.startsWith(prefix) ? `${toDir}/${key.slice(prefix.length)}` : key,
+      hash,
+    ]);
+    await writeFile(sourcesPath, JSON.stringify(Object.fromEntries(rekeyed)));
+  }
+  await prisma.trip.deleteMany({ where: { slug: from } });
+  await ingestTrip(to);
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+
+  const renameIndex = args.indexOf("--rename");
+  if (renameIndex !== -1) {
+    const [from, to] = args.slice(renameIndex + 1);
+    if (!from || !to) throw new Error("usage: --rename <old-slug> <new-slug>");
+    await renameTrip(from, to);
+    await refreshSite();
+    await prisma.$disconnect();
+    return;
+  }
 
   // Run by the site's /api/step-location route, not by hand.
   const moveIndex = args.indexOf("--move-step");

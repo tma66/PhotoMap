@@ -145,10 +145,12 @@ is additive.
 
 - **Remove some photos:** delete the files from `assets/<slug>/`, then
   re-ingest that trip (or let `--watch` catch the deletion).
-- **Remove a whole trip:** delete `assets/<slug>/` entirely, then
-  `npm run ingest -- --rebuild`. A plain ingest (or `--watch`) won't clean it
-  up: both only rebuild trips they can still find a folder for, so a wiped
-  DB + full re-ingest is the only way to drop a trip that's gone from disk.
+- **Remove a whole trip:** delete `assets/<slug>/` entirely; `--watch` or a
+  plain ingest drops it from the site (skipped if `assets/` has no folders
+  at all, e.g. an unmounted drive).
+- **Rename a trip:** `npm run ingest -- --rename <old> <new>`. Renaming the
+  folder by hand works too, but re-encodes all its media into a new cache
+  folder.
 
 ## Deploying / making it reachable
 

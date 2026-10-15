@@ -313,6 +313,22 @@ describe("nearestCoord", () => {
     const media = [target, at("nextDay.jpg", "2025-04-06T16:00:01Z")];
     expect(nearestCoord(media, target, new Map())).toBeUndefined();
   });
+
+  it("with sameDay, takes any gap on the target's date but not another date", () => {
+    const target = at("noGps.jpg", "2025-04-06T01:00:00Z", {
+      lat: undefined,
+      lng: undefined,
+    });
+    const media = [
+      target,
+      at("prevDay.jpg", "2025-04-05T23:59:00Z", { lat: 8, lng: 8 }),
+      at("late.jpg", "2025-04-06T22:00:00Z", { lat: 22.29, lng: 114.15 }),
+    ];
+    expect(nearestCoord(media, target, new Map(), true)).toBe("22.29,114.15");
+    expect(nearestCoord(media.slice(0, 2), target, new Map(), true)).toBe(
+      undefined,
+    );
+  });
 });
 
 describe("isSameCoord", () => {

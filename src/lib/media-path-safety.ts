@@ -4,7 +4,7 @@
 // <20 hex char content hash>-(thumb|pin|card|display).jpg or -video.mp4 —
 // content-addressed, so a cache-busting query string is never needed and the
 // response can be cached "immutable".
-const SAFE_SLUG = /^[a-zA-Z0-9_-]+$/;
+export const SAFE_SLUG = /^[a-zA-Z0-9_-]+$/;
 const SAFE_FILE =
   /^[a-f0-9]{20}-(thumb\.jpg|pin\.jpg|card\.jpg|display\.jpg|video\.mp4)$/;
 

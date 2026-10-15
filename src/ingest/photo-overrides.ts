@@ -256,19 +256,23 @@ const MAX_NEAREST_HOURS = 6;
  * MAX_NEAREST_HOURS, among those with a coord and not named in `skip`;
  * copy-date (mtime) items have no real time, so they're skipped too.
  * Undefined if there's none — a photo days away may be in another city.
+ * With `sameDay`, any gap is fine but only items on target's date count.
  */
 export function nearestCoord(
   media: TaggedMedia[],
   target: TaggedMedia,
   skip: Map<string, string>,
+  sameDay = false,
 ): string | undefined {
+  const day = (m: TaggedMedia) => m.takenAt.toISOString().slice(0, 10);
   let best: TaggedMedia | undefined;
-  let bestGap = MAX_NEAREST_HOURS * 3_600_000;
+  let bestGap = sameDay ? Infinity : MAX_NEAREST_HOURS * 3_600_000;
   for (const m of media) {
     if (m === target || m.takenAtIsMtime || m.lat == null || m.lng == null) {
       continue;
     }
     if (skip.has(basename(m.sourcePath))) continue;
+    if (sameDay && day(m) !== day(target)) continue;
     const gap = Math.abs(m.takenAt.getTime() - target.takenAt.getTime());
     if (best ? gap < bestGap : gap <= bestGap) {
       best = m;
