@@ -222,8 +222,8 @@ async function writeResizedDerivatives(
 
 /**
  * Decode a source image (converting HEIC via `sips` first if needed) and
- * write `thumb`/`display` JPEGs — resized and EXIF-stripped by sharp's
- * default behaviour — into `cacheDir/<hash>-thumb.jpg` and `-display.jpg`.
+ * write its JPEGs — resized and EXIF-stripped by sharp's default
+ * behaviour — via writeResizedDerivatives, plus `-meta.json`.
  * Returns the shared hash + original dimensions + a tiny inline placeholder.
  *
  * The hash is of the *source* file's own bytes (not the converted JPEG), so
@@ -258,7 +258,7 @@ export async function processImage(
 /**
  * Transcode a source video to H.264/AAC MP4 (so it plays in any browser,
  * unlike the HEVC most iPhones record) into `cacheDir/<hash>-video.mp4`,
- * plus a poster-frame `thumb`/`display` JPEG pair (same shape as a photo's,
+ * plus poster-frame JPEGs (same set as a photo's,
  * so the carousel/story views need no video-specific cover handling) and
  * the source's own duration. Same source-hash cache-skip as processImage.
  */

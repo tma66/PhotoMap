@@ -113,12 +113,12 @@ export function refreshChangedCoords(
     const coord = parseCoord(entry.coord);
     if (!coord) continue;
     const last = lastCoords[entry.file];
-    const changed =
-      last !== undefined
-        ? last !== entry.coord
-        : entry.locationName !== namesFor(coord).locationName;
+    const names = last === undefined ? namesFor(coord) : undefined;
+    const changed = names
+      ? entry.locationName !== names.locationName
+      : last !== entry.coord;
     if (!changed) continue;
-    Object.assign(entry, namesFor(coord));
+    Object.assign(entry, names ?? namesFor(coord));
     if (clearWeather) {
       entry.weatherTempF = null;
       entry.weatherCode = null;

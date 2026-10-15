@@ -98,9 +98,7 @@ subfolders, `photos` is grouped by subfolder number first
 (`{ "1": { "2025-05-16": [...] }, "3": { ... } }`). A trip with no
 geotagged photo at all is left off the site until you fill in a `coord`.
 
-Existing entries are never moved or reordered: to fix a photo's date (e.g.
-one with no EXIF date, which falls back to the file's date), move its entry
-under the right date and it's treated as taken that day. Change a `coord`
+Change a `coord`
 and the next run re-derives that photo's `locationName`, `cityName` and
 weather; a value you typed yourself is kept as long as its coord stays the
 same. Weather is the daytime (9am–6pm) high and typical conditions; to

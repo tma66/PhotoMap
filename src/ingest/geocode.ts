@@ -161,15 +161,25 @@ function nearestCity(
   return best ? { city: best, dist: bestDist } : undefined;
 }
 
+// One country's cities, filtered once rather than on every lookup.
+const citiesByCountry = new Map<string, CityRecord[]>();
+
+function citiesIn(countryCode: string): CityRecord[] {
+  let pool = citiesByCountry.get(countryCode);
+  if (!pool) {
+    pool = cities.filter((c) => c.country === countryCode);
+    citiesByCountry.set(countryCode, pool);
+  }
+  return pool;
+}
+
 /**
  * Nearest named place to a coordinate. Prefers cities within the given
  * country (when known) so e.g. a point near a border doesn't jump across
  * it; falls back to the globally nearest city otherwise.
  */
 export function nearestPlaceName(point: LatLng, countryCode?: string): string {
-  const pool = countryCode
-    ? cities.filter((c) => c.country === countryCode)
-    : cities;
+  const pool = countryCode ? citiesIn(countryCode) : cities;
   const searchPool = pool.length > 0 ? pool : cities;
 
   return nearestCity(point, searchPool)?.city.name ?? "Unknown location";
