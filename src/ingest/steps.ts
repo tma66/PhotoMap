@@ -38,6 +38,8 @@ export interface TaggedMedia {
   utcOffsetMin?: number;
   lat?: number;
   lng?: number;
+  /** The file's own GPS, kept when a hand-typed coord replaces lat/lng. */
+  gps?: { lat: number; lng: number };
   caption?: string;
 }
 

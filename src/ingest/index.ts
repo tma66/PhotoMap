@@ -22,10 +22,10 @@
 //     to do by hand; GPS-less photos need a coord typed in, after which
 //     locationName/weather auto-fill too (this and the site's --move-step
 //     are the only steps that fetch weather — see src/ingest/photo-overrides.ts),
-//     AND an entry still filed under the UTC date older ingests gave a file
-//     whose only time is UTC (a video with just creation_time) moves to its
-//     local date, its weather blanked to be refetched; entries you moved to
-//     another date, and copy-date (mtime) files, stay. Each date's entries
+//     AND an entry filed under a date other than its file's recorded one
+//     (up to 7 days off; see misfiledMoves) moves to it, a hand-typed coord
+//     becoming the nearest unmoved item's, weather refetched; copy-date (mtime) files,
+//     and entries further off, stay where they're filed. Each date's entries
 //     are sorted by time, and trip.json.<timestamp>.bak is kept when the
 //     file changes. Each affected trip is then re-ingested into the DB, so the site reflects
 //     the refreshed trip.json (and any photos removed from assets/) right
@@ -81,7 +81,9 @@ import {
   parseCoord,
   refreshChangedCoords,
   sortEntriesByTime,
-  staleUtcMoves,
+  isSameCoord,
+  nearestCoord,
+  misfiledMoves,
   type PhotoOverridesByDay,
   type PhotosBlock,
 } from "./photo-overrides";
@@ -204,10 +206,10 @@ async function loadTaggedMedia(
   const media = await readTaggedMedia(tripDir, photoOverrides);
   const utcDays = media.map((m) => m.takenAt.toISOString().slice(0, 10));
   localizeExactInstants(media);
-  // A date still the stale UTC one isn't a correction: keep the local date
+  // A file's own recorded date beats the one it's filed under
   // (--photos-template re-files it in trip.json too).
-  const stale = staleUtcMoves(media, utcDays, photoOverrides);
-  applyFiledDates(media, photoOverrides, stale);
+  const misfiled = misfiledMoves(media, utcDays, photoOverrides);
+  applyFiledDates(media, photoOverrides, misfiled);
   media.sort((a, b) => a.takenAt.getTime() - b.takenAt.getTime());
   return media;
 }
@@ -242,6 +244,7 @@ async function readTaggedMedia(
   // route rather than falling back to one shared trip-wide point.
   const overrideIndex = buildOverrideIndex(photoOverrides);
   for (const m of media) {
+    if (m.lat != null && m.lng != null) m.gps = { lat: m.lat, lng: m.lng };
     const coord = parseCoord(overrideIndex.get(basename(m.sourcePath))?.coord);
     if (coord) {
       m.lat = coord.lat;
@@ -645,8 +648,8 @@ async function writePhotoTemplate(slug: string): Promise<void> {
 
   const overrides = await readTripOverrides(tripDir);
   const { isMultiTrip, trips } = await listTrips(slug);
-  // loadTaggedMedia's steps, with stale UTC-dated entries re-filed (see
-  // staleUtcMoves) before the filed dates are applied.
+  // loadTaggedMedia's steps, with misfiled entries re-filed (see
+  // misfiledMoves) before the filed dates are applied.
   const mediaByTrip: { number: number; media: TaggedMedia[] }[] = [];
   const read = await Promise.all(
     trips.map((t) => readTaggedMedia(t.dir, overrides.photos)),
@@ -659,8 +662,9 @@ async function writePhotoTemplate(slug: string): Promise<void> {
       isMultiTrip ? overrides.photos?.[String(t.number)] : overrides.photos
     ) as PhotoOverridesByDay | undefined;
     const moves = own
-      ? staleUtcMoves(media, utcDays, own)
+      ? misfiledMoves(media, utcDays, own)
       : new Map<string, string>();
+    const was = filedDates(own);
     if (own) {
       moveEntries(own, moves);
       // Its weather was the old date's. Blank, it's fetched below or, with
@@ -673,10 +677,21 @@ async function writePhotoTemplate(slug: string): Promise<void> {
     }
     for (const [file, day] of moves) {
       console.log(
-        `[ingest] ${tripLabel(slug, t.number, isMultiTrip)} ${file}: moved to ${day} (was its UTC date)`,
+        `[ingest] ${tripLabel(slug, t.number, isMultiTrip)} ${file}: moved ${was.get(file)} -> ${day} (its recorded date)`,
       );
     }
     applyFiledDates(media, overrides.photos);
+    // A moved entry's hand-typed coord was for its old date: take the
+    // nearest unmoved item's (names and weather refresh below, as the coord
+    // changed). The file's own GPS, or a blank coord over it, stays.
+    for (const e of own ? allEntries(own) : []) {
+      if (!moves.has(e.file)) continue;
+      const m = media.find((m) => basename(m.sourcePath) === e.file)!;
+      if (m.gps && (!e.coord || isSameCoord(parseCoord(e.coord), m.gps))) {
+        continue;
+      }
+      e.coord = nearestCoord(media, m, moves) ?? e.coord;
+    }
     media.sort((a, b) => a.takenAt.getTime() - b.takenAt.getTime());
     mediaByTrip.push({ number: t.number, media });
   }

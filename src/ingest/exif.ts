@@ -119,6 +119,10 @@ interface FfprobeOutput {
       creation_time?: string;
       "com.apple.quicktime.creationdate"?: string;
       "com.apple.quicktime.location.ISO6709"?: string;
+      // Plain MP4 ©day/©xyz — what some re-saved iPhone videos carry instead
+      // of the com.apple.quicktime.* pair, same formats.
+      date?: string;
+      location?: string;
     };
   };
 }
@@ -147,7 +151,10 @@ export async function readVideoMetadata(
     const data = JSON.parse(stdout) as FfprobeOutput;
     const tags = data.format?.tags ?? {};
 
-    const localDateTime = tags["com.apple.quicktime.creationdate"];
+    // A `date` with no UTC offset could be UTC ("...Z"), so it doesn't count.
+    const localDateTime =
+      tags["com.apple.quicktime.creationdate"] ??
+      (parseUtcOffset(tags.date) != null ? tags.date : undefined);
     const localParsed = localDateTime
       ? parseQuickTimeLocalDateTime(localDateTime)
       : undefined;
@@ -168,9 +175,9 @@ export async function readVideoMetadata(
     }
     const takenAtIsMtime = !localParsed && !tags.creation_time;
 
-    const coord = tags["com.apple.quicktime.location.ISO6709"]
-      ? parseIso6709(tags["com.apple.quicktime.location.ISO6709"])
-      : undefined;
+    const iso6709 =
+      tags["com.apple.quicktime.location.ISO6709"] ?? tags.location;
+    const coord = iso6709 ? parseIso6709(iso6709) : undefined;
 
     return {
       takenAt,

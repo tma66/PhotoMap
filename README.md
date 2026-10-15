@@ -86,8 +86,11 @@ This (re)writes `assets/japan-2025/trip.json`'s `photos` block: one entry per
 photo, grouped by day, with `coord`/location/weather auto-filled for anything
 already geotagged, then re-ingests the trip so the site picks it up right
 away. Type in a `coord` (`"lat,lng"`) for anything left blank, then re-run
-the same command. To fix a wrong date, move the entry to the right date in
-`trip.json`; the command keeps it there. Entries stay in time order within
+the same command. An entry filed up to 7 days from the date its file records
+moves to that date (a hand-typed coord becomes the nearest photo's; the
+file's own GPS stays). To fix a date that's
+wrong in the file (no date, a copy date, a screen recording's), move the
+entry in `trip.json`; the command keeps it there. Entries stay in time order within
 each date, and a changed `trip.json` is backed up as
 `trip.json.<timestamp>.bak`. **The `--` before the flag is required**: without it, npm
 swallows the flag and runs a plain ingest instead. In a folder with trip

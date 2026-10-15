@@ -5,7 +5,9 @@ import {
   moveEntries,
   refreshChangedCoords,
   sortEntriesByTime,
-  staleUtcMoves,
+  isSameCoord,
+  nearestCoord,
+  misfiledMoves,
 } from "../src/ingest/photo-overrides";
 import type { TaggedMedia } from "../src/ingest/steps";
 
@@ -206,7 +208,7 @@ describe("sortEntriesByTime", () => {
   });
 });
 
-describe("staleUtcMoves", () => {
+describe("misfiledMoves", () => {
   const e = (file: string) => ({
     file,
     coord: null,
@@ -224,27 +226,94 @@ describe("staleUtcMoves", () => {
     ...extra,
   });
 
-  it("moves an entry still under its UTC date to its local date", () => {
+  it("moves a UTC-only entry still under its UTC date to its local date", () => {
     const byDay = { [utcDay]: [e("IMG_9545.MOV")] };
-    expect(staleUtcMoves([m("IMG_9545.MOV")], [utcDay], byDay)).toEqual(
+    expect(misfiledMoves([m("IMG_9545.MOV")], [utcDay], byDay)).toEqual(
       new Map([["IMG_9545.MOV", "2024-11-27"]]),
     );
   });
 
-  it("leaves hand-moved entries, copy-date files and local-time media alone", () => {
+  it("moves a local-time entry filed under any other date", () => {
+    const localTime = { takenAtIsExact: false };
     const byDay = {
-      "2024-11-26": [e("handMoved.MOV")],
-      [utcDay]: [e("copied.MOV"), e("photo.HEIC")],
+      "2024-12-02": [e("resaved.MOV")],
+      "2024-11-30": [e("handMoved.HEIC")],
+      "2024-11-27": [e("inPlace.HEIC")],
     };
-    const moves = staleUtcMoves(
+    const moves = misfiledMoves(
       [
-        m("handMoved.MOV"),
-        m("copied.MOV", { takenAtIsMtime: true }),
-        m("photo.HEIC", { takenAtIsExact: false }),
+        m("resaved.MOV", localTime),
+        m("handMoved.HEIC", localTime),
+        m("inPlace.HEIC", localTime),
       ],
-      [utcDay, utcDay, utcDay],
+      ["2024-11-27", "2024-11-27", "2024-11-27"],
+      byDay,
+    );
+    expect(moves).toEqual(
+      new Map([
+        ["resaved.MOV", "2024-11-27"],
+        ["handMoved.HEIC", "2024-11-27"],
+      ]),
+    );
+  });
+
+  it("leaves hand-moved UTC-only entries and copy-date files alone", () => {
+    const byDay = {
+      "2024-11-26": [e("handMoved.MOV"), e("copied.MOV")],
+    };
+    const moves = misfiledMoves(
+      [m("handMoved.MOV"), m("copied.MOV", { takenAtIsMtime: true })],
+      [utcDay, "2024-11-26"],
       byDay,
     );
     expect(moves.size).toBe(0);
+  });
+
+  it("leaves a local-time entry filed more than 7 days from its date", () => {
+    const byDay = { "2024-11-19": [e("screenRecording.MOV")] };
+    const moves = misfiledMoves(
+      [m("screenRecording.MOV", { takenAtIsExact: false })],
+      ["2024-11-27"],
+      byDay,
+    );
+    expect(moves.size).toBe(0);
+  });
+});
+
+describe("nearestCoord", () => {
+  const at = (file: string, t: string, extra: Partial<TaggedMedia> = {}) => ({
+    ...photo(file, t),
+    lat: 1.35,
+    lng: 103.82,
+    ...extra,
+  });
+
+  it("takes the nearest item in time, skipping moved, copy-date and coordless ones", () => {
+    const target = at("moved.MOV", "2025-04-06T10:00:00Z", { lat: 9, lng: 9 });
+    const media = [
+      target,
+      at("otherMoved.MOV", "2025-04-06T10:01:00Z", { lat: 8, lng: 8 }),
+      at("copied.jpg", "2025-04-06T10:02:00Z", { takenAtIsMtime: true }),
+      at("noGps.jpg", "2025-04-06T10:03:00Z", {
+        lat: undefined,
+        lng: undefined,
+      }),
+      at("near.jpg", "2025-04-06T09:00:00Z", { lat: 22.29, lng: 114.15 }),
+      at("far.jpg", "2025-04-06T20:00:00Z"),
+    ];
+    const moves = new Map([
+      ["moved.MOV", "2025-04-06"],
+      ["otherMoved.MOV", "2025-04-06"],
+    ]);
+    expect(nearestCoord(media, target, moves)).toBe("22.29,114.15");
+  });
+});
+
+describe("isSameCoord", () => {
+  it("matches a coord written from GPS, not a nearby or missing one", () => {
+    const gps = { lat: 1.3521, lng: 103.8198 };
+    expect(isSameCoord({ lat: 1.3521, lng: 103.8198 }, gps)).toBe(true);
+    expect(isSameCoord({ lat: 1.3522, lng: 103.8198 }, gps)).toBe(false);
+    expect(isSameCoord(undefined, gps)).toBe(false);
   });
 });

@@ -3,7 +3,8 @@
 // by date ("YYYY-MM-DD"). A new entry is filed under the photo's own local
 // date; after that, the date it's filed under is the photo's date — moving
 // an entry to another date by hand overrides a wrong one (e.g. a photo with
-// no EXIF date, which falls back to the file's own date). See filedDates.
+// no EXIF date, which falls back to the file's own date), unless the file
+// records a date within 7 days of it (see misfiledMoves). See filedDates.
 import { basename } from "node:path";
 import { cityNameFor, countryCodeForPoint, nearestPlaceName } from "./geocode";
 import type { LatLng } from "../lib/geo";
@@ -29,6 +30,15 @@ export function parseCoord(
     return undefined;
   }
   return { lat, lng };
+}
+
+/** True when two coords are the same spot (within ~10 cm). */
+export function isSameCoord(a: LatLng | undefined, b: LatLng): boolean {
+  return (
+    a != null &&
+    Math.abs(a.lat - b.lat) < 1e-6 &&
+    Math.abs(a.lng - b.lng) < 1e-6
+  );
 }
 
 /** Keyed by the photo's own date ("YYYY-MM-DD"), not a day-since-start number. */
@@ -238,14 +248,46 @@ export function buildPhotoTemplate(
 }
 
 /**
- * The entries in `block` still filed under the raw UTC date of a file whose
- * only time is a UTC instant (e.g. a video with just creation_time) — where
- * older ingests filed them — mapped to the local date they get now.
- * `utcDays` are the media's dates before localizeExactInstants. A copy-date
- * (mtime) file has no real date to re-file by, and an entry moved to any
- * other date by hand isn't stale, so both stay where they are.
+ * The "lat,lng" of the item nearest `target` in time, among those with a
+ * coord and not named in `skip`; copy-date (mtime) items have no real time,
+ * so they're skipped too. Undefined if there's none.
  */
-export function staleUtcMoves(
+export function nearestCoord(
+  media: TaggedMedia[],
+  target: TaggedMedia,
+  skip: Map<string, string>,
+): string | undefined {
+  let best: TaggedMedia | undefined;
+  for (const m of media) {
+    if (m === target || m.takenAtIsMtime || m.lat == null || m.lng == null) {
+      continue;
+    }
+    if (skip.has(basename(m.sourcePath))) continue;
+    const gap = Math.abs(m.takenAt.getTime() - target.takenAt.getTime());
+    if (
+      !best ||
+      gap < Math.abs(best.takenAt.getTime() - target.takenAt.getTime())
+    ) {
+      best = m;
+    }
+  }
+  return best && `${best.lat},${best.lng}`;
+}
+
+const MAX_MOVE_DAYS = 7;
+
+/**
+ * The entries in `block` filed under a date other than their file's own,
+ * mapped to that date: any date, for a file with a recorded local time
+ * (EXIF, QuickTime creationdate/date); only its raw UTC date — where older
+ * ingests filed it — for one whose only time is a UTC instant (e.g. a video
+ * with just creation_time, which may be a re-save's time). `utcDays` are the
+ * media's dates before localizeExactInstants. A copy-date (mtime) file has
+ * no real date, so it stays wherever it's filed; so does one filed more
+ * than MAX_MOVE_DAYS from its date (e.g. a screen recording, dated when
+ * recorded, filed by hand under the day it shows).
+ */
+export function misfiledMoves(
   media: TaggedMedia[],
   utcDays: string[],
   block: PhotosBlock | undefined,
@@ -255,14 +297,12 @@ export function staleUtcMoves(
   media.forEach((m, i) => {
     const file = basename(m.sourcePath);
     const day = m.takenAt.toISOString().slice(0, 10);
-    if (
-      m.takenAtIsExact &&
-      !m.takenAtIsMtime &&
-      filed.get(file) === utcDays[i] &&
-      day !== utcDays[i]
-    ) {
-      moves.set(file, day);
-    }
+    const at = filed.get(file);
+    const misfiled = m.takenAtIsExact
+      ? !m.takenAtIsMtime && at === utcDays[i]
+      : at != null &&
+        Math.abs(Date.parse(at) - Date.parse(day)) <= MAX_MOVE_DAYS * DAY_MS;
+    if (misfiled && at !== day) moves.set(file, day);
   });
   return moves;
 }
