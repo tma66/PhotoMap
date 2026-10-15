@@ -24,7 +24,7 @@
 //     are the only steps that fetch weather — see src/ingest/photo-overrides.ts),
 //     AND an entry filed under a date other than its file's recorded one
 //     (up to 7 days off; see misfiledMoves) moves to it, a hand-typed coord
-//     becoming the nearest unmoved item's, weather refetched; copy-date (mtime) files,
+//     becoming the nearest unmoved item's (within 6 h), weather refetched; copy-date (mtime) files,
 //     and entries further off, stay where they're filed. Each date's entries
 //     are sorted by time, and trip.json.<timestamp>.bak is kept when the
 //     file changes. Each affected trip is then re-ingested into the DB, so the site reflects
@@ -199,6 +199,19 @@ async function readTripOverrides(tripDir: string): Promise<TripOverrides> {
   }
 }
 
+/** One trip's by-day block: in a multi-trip folder, its own entry of the
+ * nested block, so a filename shared with another trip gets this trip's
+ * date, coord and weather. */
+function tripBlock(
+  photos: PhotosBlock | undefined,
+  isMultiTrip: boolean,
+  number: number,
+): PhotoOverridesByDay | undefined {
+  return (isMultiTrip ? photos?.[String(number)] : photos) as
+    | PhotoOverridesByDay
+    | undefined;
+}
+
 async function loadTaggedMedia(
   tripDir: string,
   photoOverrides: PhotosBlock | undefined,
@@ -301,7 +314,10 @@ async function ingestTrip(slug: string): Promise<void> {
 
   const prepared: PreparedTrip[] = [];
   for (const { number, dir } of trips) {
-    const media = await loadTaggedMedia(dir, overrides.photos);
+    const media = await loadTaggedMedia(
+      dir,
+      tripBlock(overrides.photos, isMultiTrip, number),
+    );
     if (media.length === 0) {
       console.warn(
         `[ingest] ${tripLabel(slug, number, isMultiTrip)}: no photos found, skipping`,
@@ -354,7 +370,9 @@ async function prepareTrip(
     return null;
   }
 
-  const overrideIndex = buildOverrideIndex(overrides.photos);
+  const overrideIndex = buildOverrideIndex(
+    tripBlock(overrides.photos, isMultiTrip, number),
+  );
   const tripTitle = overrides.title ?? humanizeSlug(slug);
 
   const stepInputs = draftSteps.map((step, i) => {
@@ -602,18 +620,23 @@ async function refreshWeather(slug: string): Promise<void> {
     console.warn(`[ingest] ${slug}: no "photos" in trip.json, nothing to do`);
     return;
   }
-  const { trips } = await listTrips(slug);
-  const media = (
-    await Promise.all(
-      trips.map((t) => loadTaggedMedia(t.dir, overrides.photos)),
-    )
-  ).flat();
+  const { isMultiTrip, trips } = await listTrips(slug);
+  const blocks = trips.map((t) =>
+    tripBlock(overrides.photos, isMultiTrip, t.number),
+  );
+  const mediaByTrip = await Promise.all(
+    trips.map((t, i) => loadTaggedMedia(t.dir, blocks[i])),
+  );
 
   const stamp = new Date().toISOString().replace(/[-:]|\..*/g, "");
   const backupPath = `${tripJsonPath}.${stamp}.bak`;
   await copyFile(tripJsonPath, backupPath);
 
-  const failed = await fillWeatherOverrides(overrides.photos, media, true);
+  let failed = 0;
+  for (const [i, block] of blocks.entries()) {
+    if (block)
+      failed += await fillWeatherOverrides(block, mediaByTrip[i]!, true);
+  }
   await writeFile(tripJsonPath, JSON.stringify(overrides, null, 2) + "\n");
   console.log(
     `[ingest] ${slug}: weather refreshed, ${failed} photo(s) kept their old weather (fetch failed); backup at ${backupPath}`,
@@ -652,15 +675,18 @@ async function writePhotoTemplate(slug: string): Promise<void> {
   // misfiledMoves) before the filed dates are applied.
   const mediaByTrip: { number: number; media: TaggedMedia[] }[] = [];
   const read = await Promise.all(
-    trips.map((t) => readTaggedMedia(t.dir, overrides.photos)),
+    trips.map((t) =>
+      readTaggedMedia(
+        t.dir,
+        tripBlock(overrides.photos, isMultiTrip, t.number),
+      ),
+    ),
   );
   for (const [i, t] of trips.entries()) {
     const media = read[i]!;
     const utcDays = media.map((m) => m.takenAt.toISOString().slice(0, 10));
     localizeExactInstants(media);
-    const own = (
-      isMultiTrip ? overrides.photos?.[String(t.number)] : overrides.photos
-    ) as PhotoOverridesByDay | undefined;
+    const own = tripBlock(overrides.photos, isMultiTrip, t.number);
     const moves = own
       ? misfiledMoves(media, utcDays, own)
       : new Map<string, string>();
@@ -680,7 +706,7 @@ async function writePhotoTemplate(slug: string): Promise<void> {
         `[ingest] ${tripLabel(slug, t.number, isMultiTrip)} ${file}: moved ${was.get(file)} -> ${day} (its recorded date)`,
       );
     }
-    applyFiledDates(media, overrides.photos);
+    applyFiledDates(media, own);
     // A moved entry's hand-typed coord was for its old date: take the
     // nearest unmoved item's (names and weather refresh below, as the coord
     // changed). The file's own GPS, or a blank coord over it, stays.
@@ -707,16 +733,23 @@ async function writePhotoTemplate(slug: string): Promise<void> {
   // the flat by-day layout. Entries are matched by filename either way, so
   // anything already filled in carries over when photos change trip.
   // Each date's entries in time order, as the site shows them.
-  const sortedTemplate = (tripMedia: TaggedMedia[]) => {
-    const byDay = buildPhotoTemplate(tripMedia, overrides.photos);
+  const sortedTemplate = (tripMedia: TaggedMedia[], number: number) => {
+    const byDay = buildPhotoTemplate(
+      tripMedia,
+      overrides.photos,
+      tripBlock(overrides.photos, isMultiTrip, number),
+    );
     sortEntriesByTime(byDay, takenAtByFile(tripMedia));
     return byDay;
   };
   const photos: PhotosBlock = isMultiTrip
     ? Object.fromEntries(
-        mediaByTrip.map((t) => [String(t.number), sortedTemplate(t.media)]),
+        mediaByTrip.map((t) => [
+          String(t.number),
+          sortedTemplate(t.media, t.number),
+        ]),
       )
-    : sortedTemplate(media);
+    : sortedTemplate(media, mediaByTrip[0]!.number);
 
   const lastCoords = await readTemplateCoords(slug);
   const refreshed = refreshChangedCoords(photos, lastCoords, WEATHER_ENABLED);
@@ -726,7 +759,12 @@ async function writePhotoTemplate(slug: string): Promise<void> {
     );
   }
   if (WEATHER_ENABLED) {
-    await fillWeatherOverrides(photos, media);
+    for (const t of mediaByTrip) {
+      await fillWeatherOverrides(
+        tripBlock(photos, isMultiTrip, t.number) ?? {},
+        t.media,
+      );
+    }
   }
   // Only a missing `coord` needs a human — locationName/weather are always
   // derivable once a coord (real or hand-typed) exists.
@@ -822,12 +860,15 @@ async function moveStep(stepId: string, coord: string): Promise<void> {
   // trip.json: the step's entries only. A photo with no entry yet needs a
   // template run first, so it's filed under the right date.
   const tripDir = join(ASSETS_DIR, slug);
+  const { isMultiTrip } = await listTrips(slug);
+  const ownIndex = (photos: PhotosBlock | undefined) =>
+    buildOverrideIndex(tripBlock(photos, isMultiTrip, trip.number));
   let overrides = await readTripOverrides(tripDir);
-  if (files.some((f) => !buildOverrideIndex(overrides.photos).has(f))) {
+  if (files.some((f) => !ownIndex(overrides.photos).has(f))) {
     await writePhotoTemplate(slug);
     overrides = await readTripOverrides(tripDir);
   }
-  const index = buildOverrideIndex(overrides.photos);
+  const index = ownIndex(overrides.photos);
   const entries = files.flatMap((f) => index.get(f) ?? []);
   const names = namesFor(point);
   for (const entry of entries) {
@@ -879,7 +920,6 @@ async function moveStep(stepId: string, coord: string): Promise<void> {
     return;
   }
 
-  const { isMultiTrip } = await listTrips(slug);
   const step = drafts[k]!;
   const first = <K extends "weatherTempF" | "weatherCode">(key: K) =>
     step.media
@@ -962,9 +1002,12 @@ async function findDuplicates(slug: string): Promise<void> {
   const cacheDir = join(CACHE_DIR, slug);
   for (const { number, dir } of trips) {
     const label = tripLabel(slug, number, isMultiTrip);
-    const photos = (await loadTaggedMedia(dir, overrides.photos)).filter(
-      (m) => m.kind === "photo",
-    );
+    const photos = (
+      await loadTaggedMedia(
+        dir,
+        tripBlock(overrides.photos, isMultiTrip, number),
+      )
+    ).filter((m) => m.kind === "photo");
     // Hashed from the cached 400px thumbnail (made now if missing), which
     // also spares decoding every HEIC original again.
     const hashed = await mapWithConcurrency(photos, async (m) => {

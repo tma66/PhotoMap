@@ -307,6 +307,12 @@ describe("nearestCoord", () => {
     ]);
     expect(nearestCoord(media, target, moves)).toBe("22.29,114.15");
   });
+
+  it("returns nothing when the nearest item is over 6 hours away", () => {
+    const target = at("moved.MOV", "2025-04-06T10:00:00Z");
+    const media = [target, at("nextDay.jpg", "2025-04-06T16:00:01Z")];
+    expect(nearestCoord(media, target, new Map())).toBeUndefined();
+  });
 });
 
 describe("isSameCoord", () => {
@@ -315,5 +321,19 @@ describe("isSameCoord", () => {
     expect(isSameCoord({ lat: 1.3521, lng: 103.8198 }, gps)).toBe(true);
     expect(isSameCoord({ lat: 1.3522, lng: 103.8198 }, gps)).toBe(false);
     expect(isSameCoord(undefined, gps)).toBe(false);
+  });
+});
+
+describe("buildPhotoTemplate with a file in several trips", () => {
+  it("keeps this trip's own entry, not another trip's", () => {
+    const media = [photo("A.jpg", "2025-05-16T10:00:00Z")];
+    const existing = {
+      "1": { "2025-05-10": [{ ...entry("A.jpg"), coord: "1,1" }] },
+      "3": { "2025-05-16": [{ ...entry("A.jpg"), coord: "3,3" }] },
+    };
+    const byDay = buildPhotoTemplate(media, existing, existing["3"]);
+    expect(byDay).toEqual({
+      "2025-05-16": [expect.objectContaining({ file: "A.jpg", coord: "3,3" })],
+    });
   });
 });

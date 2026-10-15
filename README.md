@@ -87,8 +87,8 @@ photo, grouped by day, with `coord`/location/weather auto-filled for anything
 already geotagged, then re-ingests the trip so the site picks it up right
 away. Type in a `coord` (`"lat,lng"`) for anything left blank, then re-run
 the same command. An entry filed up to 7 days from the date its file records
-moves to that date (a hand-typed coord becomes the nearest photo's; the
-file's own GPS stays). To fix a date that's
+moves to that date (a hand-typed coord becomes that of the nearest photo
+within 6 hours; the file's own GPS stays). To fix a date that's
 wrong in the file (no date, a copy date, a screen recording's), move the
 entry in `trip.json`; the command keeps it there. Entries stay in time order within
 each date, and a changed `trip.json` is backed up as

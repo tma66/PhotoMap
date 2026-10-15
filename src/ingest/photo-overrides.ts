@@ -190,7 +190,8 @@ export function sortEntriesByTime(
 
 /**
  * Builds/updates one trip's "photos" block of trip.json. Existing entries
- * (matched by filename, wherever they were filed) stay exactly where they
+ * (matched by filename, wherever they were filed — in this trip's `own`
+ * block first, when a filename is in several trips) stay exactly where they
  * are — same date, same order (index.ts then re-sorts each date by time,
  * see sortEntriesByTime) — with only a missing locationName/cityName filled in
  * below (refreshing names/weather after a coord change, and fetching
@@ -202,6 +203,7 @@ export function sortEntriesByTime(
 export function buildPhotoTemplate(
   media: TaggedMedia[],
   existing: PhotosBlock | undefined,
+  own?: PhotoOverridesByDay,
 ): PhotoOverridesByDay {
   const onDisk = new Map(media.map((m) => [basename(m.sourcePath), m]));
   const result: PhotoOverridesByDay = {};
@@ -225,7 +227,7 @@ export function buildPhotoTemplate(
     onDisk.delete(entry.file);
   };
 
-  for (const byDay of dayGroups(existing)) {
+  for (const byDay of [own ?? {}, ...dayGroups(existing)]) {
     for (const [day, entries] of Object.entries(byDay)) {
       for (const entry of entries) {
         if (onDisk.has(entry.file)) add(day, { ...entry });
@@ -247,10 +249,13 @@ export function buildPhotoTemplate(
   );
 }
 
+const MAX_NEAREST_HOURS = 6;
+
 /**
- * The "lat,lng" of the item nearest `target` in time, among those with a
- * coord and not named in `skip`; copy-date (mtime) items have no real time,
- * so they're skipped too. Undefined if there's none.
+ * The "lat,lng" of the item nearest `target` in time, within
+ * MAX_NEAREST_HOURS, among those with a coord and not named in `skip`;
+ * copy-date (mtime) items have no real time, so they're skipped too.
+ * Undefined if there's none — a photo days away may be in another city.
  */
 export function nearestCoord(
   media: TaggedMedia[],
@@ -258,17 +263,16 @@ export function nearestCoord(
   skip: Map<string, string>,
 ): string | undefined {
   let best: TaggedMedia | undefined;
+  let bestGap = MAX_NEAREST_HOURS * 3_600_000;
   for (const m of media) {
     if (m === target || m.takenAtIsMtime || m.lat == null || m.lng == null) {
       continue;
     }
     if (skip.has(basename(m.sourcePath))) continue;
     const gap = Math.abs(m.takenAt.getTime() - target.takenAt.getTime());
-    if (
-      !best ||
-      gap < Math.abs(best.takenAt.getTime() - target.takenAt.getTime())
-    ) {
+    if (best ? gap < bestGap : gap <= bestGap) {
       best = m;
+      bestGap = gap;
     }
   }
   return best && `${best.lat},${best.lng}`;
