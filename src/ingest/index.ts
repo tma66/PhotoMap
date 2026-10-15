@@ -1,50 +1,42 @@
 // Ingestion entry point: turns assets/<slug>/*.{jpg,heic,...} into rows in
 // the SQLite cache (prisma/schema.prisma) plus resized/EXIF-stripped photos
 // in data/cache/. Safe to re-run any time — each trip is fully rebuilt from
-// its source folder, so the DB is always a pure derivative of assets/. Never
-// touches the network itself — weather comes only from what's already cached
-// in trip.json's "photos" block (see --photos-template below); a trip with
-// no cached weather just has none, rather than fetching it live. One folder
-// can hold several trips, one per numbered subfolder (assets/EDC/1/,
+// its source folder, so the DB is always a pure derivative of assets/. The
+// DB step itself never touches the network: weather comes only from what's
+// cached in trip.json's "photos" block (filled in by the steps below). One
+// folder can hold several trips, one per numbered subfolder (assets/EDC/1/,
 // assets/EDC/3/ — the name is the trip's number and URL); a folder with just
 // photos in it is a single trip #1. See listTrips below.
 //
-// Usage:
-//   npm run ingest                              -- ingest every trip once
-//   npm run ingest -- --rebuild                 -- wipe the whole DB first, then ingest
-//   npm run ingest -- --watch                   -- ingest once, then keep watching assets/
-//   npm run ingest -- my-trip-slug               -- ingest just one trip folder
-//   npm run ingest -- --photos-template my-trip -- (re)generate one trip's
-//   npm run ingest -- --photos-template          -- ...or every trip's
-//     trip.json "photos" block: one entry per photo, grouped by its own
-//     local calendar date (see src/ingest/timezone.ts) — real EXIF GPS
-//     photos get their coord/locationName/weather auto-filled with nothing
-//     to do by hand; a GPS-less photo with no coord takes the nearest-in-time
-//     coord on its date (none on a copy-date photo, or a day with no coords),
-//     else needs one typed in, after which
-//     locationName/weather auto-fill too (this and the site's --move-step
-//     are the only steps that fetch weather — see src/ingest/photo-overrides.ts),
-//     AND an entry filed under a date other than its file's recorded one
-//     (up to 7 days off; see misfiledMoves) moves to it, a hand-typed coord
-//     becoming the nearest unmoved item's (within 6 h), weather refetched; copy-date (mtime) files,
-//     and entries further off, stay where they're filed. Each date's entries
-//     are sorted by time, and trip.json.<timestamp>.bak is kept when the
-//     file changes. Each affected trip is then re-ingested into the DB, so the site reflects
-//     the refreshed trip.json (and any photos removed from assets/) right
-//     away. The leading `--` is required (without it, npm won't forward the
-//     flag and just runs a plain ingest instead).
-//   npm run ingest -- --refresh-weather my-trip -- refetch one trip's
-//   npm run ingest -- --refresh-weather          -- ...or every trip's
-//     weather in trip.json, replacing what's there (for when weather.ts
-//     changes how it sums up a day). Nothing else in trip.json changes, and
-//     the old file is kept beside it as trip.json.<timestamp>.bak.
-//   npm run ingest -- --rename old-slug new-slug -- rename a trip folder (its
+// Usage (package.json scripts; npm drops a flag not after `--`, so each
+// flag has its own script):
+//   npm run ingest [my-trip] -- update every trip, or just one. For each:
+//     1. Files are renamed: an image's extension matched to its content, and
+//        a local "20221225-153803_" time prefix (see file-names.ts).
+//     2. trip.json's "photos" block is (re)written: one entry per photo,
+//        grouped by its own local calendar date (see src/ingest/timezone.ts).
+//        Real EXIF GPS photos get coord/locationName/weather auto-filled; a
+//        GPS-less photo with no coord takes the nearest-in-time coord on its
+//        date (none on a copy-date photo, or a day with no coords), else
+//        needs one typed in, after which locationName/weather auto-fill too
+//        (this and the site's --move-step are the only steps that fetch
+//        weather — see src/ingest/photo-overrides.ts). An entry filed under
+//        a date other than its file's recorded one (up to 7 days off; see
+//        misfiledMoves) moves to it, a hand-typed coord becoming the nearest
+//        unmoved item's (within 6 h), weather refetched; copy-date (mtime)
+//        files, and entries further off, stay where they're filed. Each
+//        date's entries are sorted by time, and trip.json.<timestamp>.bak is
+//        kept when the file changes. Duplicate images are printed
+//        (see reportDuplicates); all copies stay on the site.
+//     3. The trip is ingested into the DB.
+//     With no slug, trips whose folder is gone are dropped too. Stale source
+//     hashes are then cleared (see pruneSourceIndexes).
+//   npm run watch   -- ingest only (no renames, no trip.json
+//     writes), then keep watching assets/ and re-ingest a changed trip
+//   npm run rebuild -- wipe the whole DB, then ingest only
+//   npm run rename old-slug new-slug -- rename a trip folder (its
 //     URL) and its cache folder, drop the old name's DB rows and ingest the
 //     new one; nothing is re-encoded. NFC tags with the old URL need rewriting.
-//   npm run ingest -- --find-duplicates my-trip -- list one trip's (or,
-//     with no slug, every trip's) exact and near-duplicate photos within
-//     each trip (videos skipped) — see src/ingest/duplicates.ts. Report
-//     only: files, trip.json and the DB are left alone.
 
 process.on("unhandledRejection", (reason) => {
   console.error("Unhandled Rejection in ingest:", reason);
@@ -93,8 +85,16 @@ import {
   type PhotoOverridesByDay,
   type PhotosBlock,
 } from "./photo-overrides";
-import { processImage, processVideo, saveSourceIndex } from "./media";
+import {
+  processImage,
+  processVideo,
+  pruneSourceIndex,
+  readHead,
+  renameSources,
+  saveSourceIndex,
+} from "./media";
 import { findDuplicateGroups, perceptualHash } from "./duplicates";
+import { freeName, normalizedName, sniffImageType } from "./file-names";
 import { refreshSite } from "./site-refresh";
 import { fetchHistoricalWeather } from "./weather";
 import { tripDistanceKm, uniqueCountryCodes } from "../lib/stats";
@@ -122,7 +122,7 @@ interface TripOverrides {
   stepTitles?: Record<string, string | Record<string, string>>;
   /** Per-photo manual overrides for missing GPS/location/weather — see
    * src/ingest/photo-overrides.ts. Generate/update with
-   * `npm run ingest -- --photos-template <slug>`. */
+   * `npm run ingest`. */
   photos?: PhotosBlock;
 }
 
@@ -227,7 +227,7 @@ async function loadTaggedMedia(
   const utcDays = media.map((m) => m.takenAt.toISOString().slice(0, 10));
   localizeExactInstants(media);
   // A file's own recorded date beats the one it's filed under
-  // (--photos-template re-files it in trip.json too).
+  // (a plain ingest re-files it in trip.json too).
   const misfiled = misfiledMoves(media, utcDays, photoOverrides);
   applyFiledDates(media, photoOverrides, misfiled);
   media.sort((a, b) => a.takenAt.getTime() - b.takenAt.getTime());
@@ -328,10 +328,8 @@ async function ingestTrip(slug: string): Promise<void> {
 
   const prepared: PreparedTrip[] = [];
   for (const { number, dir } of trips) {
-    const media = await loadTaggedMedia(
-      dir,
-      tripBlock(overrides.photos, isMultiTrip, number),
-    );
+    const own = tripBlock(overrides.photos, isMultiTrip, number);
+    const media = await loadTaggedMedia(dir, own);
     if (media.length === 0) {
       console.warn(
         `[ingest] ${tripLabel(slug, number, isMultiTrip)}: no photos found, skipping`,
@@ -379,7 +377,7 @@ async function prepareTrip(
   );
   if (draftSteps.length === 0) {
     console.warn(
-      `[ingest] ${label}: no geotagged photos, skipping — fill in coords with --photos-template`,
+      `[ingest] ${label}: no geotagged photos, skipping — type a coord into trip.json and re-run`,
     );
     return null;
   }
@@ -396,7 +394,7 @@ async function prepareTrip(
       ? ""
       : (countryCodeForPoint(step.centroid) ?? "");
     // Weather only ever comes from the photo overrides — cached once by
-    // `npm run ingest -- --photos-template`, never fetched live here. Temp,
+    // updateTrips into trip.json, never fetched live here. Temp,
     // code and locationName can each be filled in on different photos within
     // the same step, so each is taken from the first photo that has it.
     const photoOverrides = step.media.map((m) =>
@@ -577,20 +575,17 @@ const takenAtByFile = (media: TaggedMedia[]) =>
  * Fetches weather for any entry that has a `coord` but is still missing
  * `weatherTempF`/`weatherCode` — done here (network I/O) rather than in
  * `buildPhotoTemplate` (kept pure/offline) — so it's persisted to trip.json
- * once instead of being re-fetched on every regular ingest. With `replace`,
- * refetches every entry instead, keeping the old value where a fetch fails.
- * Returns how many entries' fetches failed.
+ * once instead of being re-fetched on every ingest. Returns how many
+ * entries' fetches failed.
  */
 async function fillWeatherOverrides(
   photos: PhotosBlock,
   media: TaggedMedia[],
-  replace = false,
 ): Promise<number> {
   const takenAtOf = takenAtByFile(media);
 
   const needsWeather = allEntries(photos).filter(
-    (entry) =>
-      replace || entry.weatherTempF == null || entry.weatherCode == null,
+    (entry) => entry.weatherTempF == null || entry.weatherCode == null,
   );
 
   // A day's photos are mostly at one spot: one request per place and day.
@@ -613,9 +608,6 @@ async function fillWeatherOverrides(
       const weather = await fetching;
       if (!weather) {
         failed++;
-      } else if (replace) {
-        entry.weatherTempF = weather.tempF;
-        entry.weatherCode = weather.code;
       } else {
         entry.weatherTempF ??= weather.tempF;
         entry.weatherCode ??= weather.code;
@@ -624,37 +616,6 @@ async function fillWeatherOverrides(
     4, // one per core got some requests refused on a big trip
   );
   return failed;
-}
-
-async function refreshWeather(slug: string): Promise<void> {
-  const tripDir = join(ASSETS_DIR, slug);
-  const tripJsonPath = join(tripDir, "trip.json");
-  const overrides = await readTripOverrides(tripDir);
-  if (!overrides.photos) {
-    console.warn(`[ingest] ${slug}: no "photos" in trip.json, nothing to do`);
-    return;
-  }
-  const { isMultiTrip, trips } = await listTrips(slug);
-  const blocks = trips.map((t) =>
-    tripBlock(overrides.photos, isMultiTrip, t.number),
-  );
-  const mediaByTrip = await Promise.all(
-    trips.map((t, i) => loadTaggedMedia(t.dir, blocks[i])),
-  );
-
-  const stamp = new Date().toISOString().replace(/[-:]|\..*/g, "");
-  const backupPath = `${tripJsonPath}.${stamp}.bak`;
-  await copyFile(tripJsonPath, backupPath);
-
-  let failed = 0;
-  for (const [i, block] of blocks.entries()) {
-    if (block)
-      failed += await fillWeatherOverrides(block, mediaByTrip[i]!, true);
-  }
-  await writeFile(tripJsonPath, JSON.stringify(overrides, null, 2) + "\n");
-  console.log(
-    `[ingest] ${slug}: weather refreshed, ${failed} photo(s) kept their old weather (fetch failed); backup at ${backupPath}`,
-  );
 }
 
 // Each photo's coord as of the last template run, so a changed coord's place
@@ -677,6 +638,22 @@ async function writeTemplateCoords(
 ): Promise<void> {
   await mkdir(join(CACHE_DIR, slug), { recursive: true });
   await writeFile(templateCoordsPath(slug), JSON.stringify(coords));
+}
+
+const backups = new Map<string, string>();
+
+/** Copies `path` to `<path>.<UTC timestamp>.bak`; returns the copy's path.
+ * Once per run: a later call (e.g. the template after the renames) keeps
+ * the first copy, the file as it was before this run — a second copy could
+ * get the same timestamp and overwrite it. */
+async function backUp(path: string): Promise<string> {
+  const done = backups.get(path);
+  if (done) return done;
+  const stamp = new Date().toISOString().replace(/[-:]|\..*/g, "");
+  const backupPath = `${path}.${stamp}.bak`;
+  await copyFile(path, backupPath);
+  backups.set(path, backupPath);
+  return backupPath;
 }
 
 async function writePhotoTemplate(slug: string): Promise<void> {
@@ -798,6 +775,14 @@ async function writePhotoTemplate(slug: string): Promise<void> {
       );
     }
   }
+  for (const t of mediaByTrip) {
+    await reportDuplicates(
+      tripLabel(slug, t.number, isMultiTrip),
+      t.media,
+      join(CACHE_DIR, slug),
+    );
+  }
+
   // Only a missing `coord` needs a human — locationName/weather are always
   // derivable once a coord (real or hand-typed) exists.
   const needingInfo = allEntries(photos).filter((e) => e.coord == null).length;
@@ -806,9 +791,7 @@ async function writePhotoTemplate(slug: string): Promise<void> {
   const json = JSON.stringify(updated, null, 2) + "\n";
   const current = await readFile(tripJsonPath, "utf8").catch(() => null);
   if (current != null && current !== json) {
-    const stamp = new Date().toISOString().replace(/[-:]|\..*/g, "");
-    const backupPath = `${tripJsonPath}.${stamp}.bak`;
-    await copyFile(tripJsonPath, backupPath);
+    const backupPath = await backUp(tripJsonPath);
     console.log(`[ingest] ${slug}: trip.json changed; backup at ${backupPath}`);
   }
   await writeFile(tripJsonPath, json);
@@ -839,7 +822,7 @@ async function writePhotoTemplate(slug: string): Promise<void> {
  * What the trip page's "change location" picker saves (via
  * /api/step-location): moves every photo in one step to `coord`. Only that
  * step is looked at — its photos' trip.json entries get the new coord, place
- * name and weather (the same values a --photos-template run would derive),
+ * name and weather (the same values a plain ingest would derive),
  * and its DB rows are patched in place, without re-reading or re-geocoding
  * the rest of the trip. If the move changes how photos group into steps
  * (e.g. the new spot merges it into the same day's previous step), the whole
@@ -1015,10 +998,11 @@ async function moveStep(stepId: string, coord: string): Promise<void> {
   ]);
 }
 
-async function ingestAll(onlySlug?: string): Promise<void> {
+/** Every trip folder plus, with no `onlySlug`, the trips whose folder is
+ * gone (ingestTrip drops them) — unless assets/ looks empty, e.g. an
+ * unmounted drive, which would wipe every trip. */
+async function slugsToIngest(onlySlug?: string): Promise<string[]> {
   const slugs = onlySlug ? [onlySlug] : await listTripSlugs();
-  // Trips whose folder is gone (ingestTrip drops them) — unless assets/
-  // looks empty, e.g. an unmounted drive, which would wipe every trip.
   if (!onlySlug && slugs.length > 0) {
     const inDb = await prisma.trip.findMany({
       select: { slug: true },
@@ -1026,7 +1010,47 @@ async function ingestAll(onlySlug?: string): Promise<void> {
     });
     for (const { slug } of inDb) if (!slugs.includes(slug)) slugs.push(slug);
   }
-  for (const slug of slugs) {
+  return slugs;
+}
+
+/** Drops hashes of files since renamed, edited or deleted from each cache
+ * folder's sources.json (all of them, removed trips' included, with no
+ * `onlySlug`); the derivatives themselves stay. */
+async function pruneSourceIndexes(onlySlug?: string): Promise<void> {
+  const names = onlySlug
+    ? [onlySlug]
+    : (await readdir(CACHE_DIR, { withFileTypes: true }).catch(() => []))
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name);
+  for (const name of names) {
+    const pruned = await pruneSourceIndex(join(CACHE_DIR, name));
+    if (pruned > 0) {
+      console.log(`[ingest] ${name}: dropped ${pruned} stale source hash(es)`);
+    }
+  }
+}
+
+/** A plain `npm run ingest`: for each trip, renames its files
+ * (normalizeFileNames), refreshes trip.json's photos block
+ * (writePhotoTemplate) and ingests it; a trip whose folder is gone is
+ * dropped. */
+async function updateTrips(onlySlug?: string): Promise<void> {
+  for (const slug of await slugsToIngest(onlySlug)) {
+    try {
+      if (await exists(join(ASSETS_DIR, slug))) {
+        await normalizeFileNames(slug);
+        await writePhotoTemplate(slug);
+      }
+      await ingestTrip(slug);
+    } catch (err) {
+      console.error(`[ingest] ${slug}: failed`, err);
+    }
+  }
+}
+
+/** Ingest only — what --rebuild and --watch do. */
+async function ingestAll(onlySlug?: string): Promise<void> {
+  for (const slug of await slugsToIngest(onlySlug)) {
     try {
       await ingestTrip(slug);
     } catch (err) {
@@ -1035,46 +1059,147 @@ async function ingestAll(onlySlug?: string): Promise<void> {
   }
 }
 
-/** Prints each trip's exact and near-duplicate photos (videos skipped).
- * Report only: the files, trip.json and the DB are left as they are. */
-async function findDuplicates(slug: string): Promise<void> {
-  const overrides = await readTripOverrides(join(ASSETS_DIR, slug));
-  const { isMultiTrip, trips } = await listTrips(slug);
-  const cacheDir = join(CACHE_DIR, slug);
-  for (const { number, dir } of trips) {
-    const label = tripLabel(slug, number, isMultiTrip);
-    const photos = (
-      await loadTaggedMedia(
-        dir,
-        tripBlock(overrides.photos, isMultiTrip, number),
-      )
-    ).filter((m) => m.kind === "photo");
-    // Hashed from the cached 400px thumbnail (made now if missing), which
-    // also spares decoding every HEIC original again.
-    const hashed = await mapWithConcurrency(photos, async (m) => {
-      try {
-        const { hash } = await processImage(m.sourcePath, cacheDir);
-        const thumb = await readFile(join(cacheDir, `${hash}-thumb.jpg`));
-        return {
-          file: basename(m.sourcePath),
-          contentHash: hash,
-          perceptualHash: await perceptualHash(thumb),
-        };
-      } catch (err) {
-        console.warn(`[duplicates] ${label}: can't read ${m.sourcePath}:`, err);
-        return null;
-      }
-    });
-    await saveSourceIndex(cacheDir);
-    const groups = findDuplicateGroups(hashed.filter((h) => h !== null));
-    console.log(
-      `[duplicates] ${label}: ${photos.length} photos, ${groups.length} duplicate group(s)`,
-    );
-    for (const g of groups) {
-      const how =
-        g.kind === "exact" ? "exact" : `near, distance ${g.maxDistance}`;
-      console.log(`  ${how}: ${g.files.join(", ")}`);
+/** Each photo's content and perceptual hashes, plus its size for picking
+ * which copy of a duplicate to keep. Hashed from the cached 400px thumbnail
+ * (made now if missing), which spares decoding every HEIC original again. */
+async function hashPhotos(
+  label: string,
+  photos: TaggedMedia[],
+  cacheDir: string,
+) {
+  const hashed = await mapWithConcurrency(photos, async (m) => {
+    try {
+      const { hash, width, height } = await processImage(
+        m.sourcePath,
+        cacheDir,
+      );
+      const thumb = await readFile(join(cacheDir, `${hash}-thumb.jpg`));
+      return {
+        file: basename(m.sourcePath),
+        path: m.sourcePath,
+        contentHash: hash,
+        perceptualHash: await perceptualHash(thumb),
+        width,
+        height,
+        bytes: (await stat(m.sourcePath)).size,
+      };
+    } catch (err) {
+      console.warn(`[duplicates] ${label}: can't read ${m.sourcePath}:`, err);
+      return null;
     }
+  });
+  await saveSourceIndex(cacheDir);
+  return hashed.filter((h) => h !== null);
+}
+
+/** Prints each group of duplicate photos, largest copy (most pixels, then
+ * biggest file) first, for deleting by hand. Nothing is skipped or written. */
+async function reportDuplicates(
+  label: string,
+  media: TaggedMedia[],
+  cacheDir: string,
+): Promise<void> {
+  const hashed = await hashPhotos(
+    label,
+    media.filter((m) => m.kind === "photo"),
+    cacheDir,
+  );
+  const byFile = new Map(hashed.map((h) => [h.file, h]));
+  const groups = findDuplicateGroups(hashed);
+  if (groups.length === 0) return;
+  console.log(
+    `[duplicates] ${label}: ${groups.length} group(s) of duplicate photos, still on the site — delete the copies you don't want`,
+  );
+  for (const group of groups) {
+    const how =
+      group.kind === "exact" ? "exact" : `near, distance ${group.maxDistance}`;
+    console.log(`  ${how}:`);
+    const copies = group.files
+      .map((f) => byFile.get(f)!)
+      .sort(
+        (a, b) => b.width * b.height - a.width * a.height || b.bytes - a.bytes,
+      );
+    for (const h of copies) {
+      console.log(
+        `    ${h.path} (${h.width}x${h.height}, ${Math.round(h.bytes / 1024)} KB)`,
+      );
+    }
+  }
+}
+
+/** A plain ingest's first step: renames each media file to its
+ * normalizedName (extension matching its content, local date-time prefix —
+ * see file-names.ts), carrying the new names into trip.json,
+ * template-coords.json and the source-hash index so nothing typed in is
+ * lost. Copy-date (mtime) files get no prefix: they have no real time. */
+async function normalizeFileNames(slug: string): Promise<void> {
+  const tripDir = join(ASSETS_DIR, slug);
+  const tripJsonPath = join(tripDir, "trip.json");
+  const overrides = await readTripOverrides(tripDir);
+  const { isMultiTrip, trips } = await listTrips(slug);
+
+  const planned: { number: number; dir: string; from: string; to: string }[] =
+    [];
+  for (const { number, dir } of trips) {
+    const media = await loadTaggedMedia(
+      dir,
+      tripBlock(overrides.photos, isMultiTrip, number),
+    );
+    const taken = new Set((await readdir(dir)).map((n) => n.toLowerCase()));
+    for (const m of media) {
+      const from = basename(m.sourcePath);
+      const type =
+        m.kind === "photo"
+          ? sniffImageType(await readHead(m.sourcePath))
+          : undefined;
+      const wanted = normalizedName(
+        from,
+        m.takenAtIsMtime ? undefined : m.takenAt,
+        type,
+      );
+      if (wanted === from) continue;
+      taken.delete(from.toLowerCase());
+      const to = freeName(wanted, taken);
+      taken.add(to.toLowerCase());
+      planned.push({ number, dir, from, to });
+    }
+  }
+  if (planned.length === 0) return;
+
+  const current = await readFile(tripJsonPath, "utf8").catch(() => null);
+  if (current != null) await backUp(tripJsonPath);
+  const done: typeof planned = [];
+  try {
+    for (const r of planned) {
+      const to = join(r.dir, r.to);
+      // fs.rename replaces an existing file; never let it.
+      if (await exists(to)) throw new Error(`${to} already exists`);
+      await rename(join(r.dir, r.from), to);
+      done.push(r);
+    }
+  } finally {
+    // Even after a failed rename, record the ones that happened.
+    for (const r of done) {
+      const block = tripBlock(overrides.photos, isMultiTrip, r.number);
+      for (const e of allEntries(block)) if (e.file === r.from) e.file = r.to;
+      if (overrides.cover === r.from) overrides.cover = r.to;
+    }
+    if (current != null) {
+      await writeFile(tripJsonPath, JSON.stringify(overrides, null, 2) + "\n");
+    }
+    const coords = await readTemplateCoords(slug);
+    for (const r of done) {
+      if (coords[r.from] !== undefined) coords[r.to] = coords[r.from]!;
+    }
+    for (const r of done) delete coords[r.from];
+    await writeTemplateCoords(slug, coords);
+    await renameSources(
+      join(CACHE_DIR, slug),
+      done.map((r) => [join(r.dir, r.from), join(r.dir, r.to)]),
+    );
+    console.log(
+      `[ingest] ${slug}: renamed ${done.length} file(s)${current != null ? "; trip.json backed up" : ""}`,
+    );
   }
 }
 
@@ -1155,41 +1280,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  const templateFlagIndex = args.indexOf("--photos-template");
-  if (templateFlagIndex !== -1) {
-    const slug = args[templateFlagIndex + 1];
-    const slugs = slug ? [slug] : await listTripSlugs();
-    for (const s of slugs) {
-      await writePhotoTemplate(s);
-      await ingestTrip(s);
-    }
-    await refreshSite();
-    await prisma.$disconnect();
-    return;
-  }
-
-  const duplicatesFlagIndex = args.indexOf("--find-duplicates");
-  if (duplicatesFlagIndex !== -1) {
-    const slug = args[duplicatesFlagIndex + 1];
-    const slugs = slug ? [slug] : await listTripSlugs();
-    for (const s of slugs) await findDuplicates(s);
-    await prisma.$disconnect();
-    return;
-  }
-
-  const weatherFlagIndex = args.indexOf("--refresh-weather");
-  if (weatherFlagIndex !== -1) {
-    const slug = args[weatherFlagIndex + 1];
-    const slugs = slug ? [slug] : await listTripSlugs();
-    for (const s of slugs) {
-      await refreshWeather(s);
-      await ingestTrip(s);
-    }
-    await refreshSite();
-    await prisma.$disconnect();
-    return;
-  }
-
   const rebuild = args.includes("--rebuild");
   const watch = args.includes("--watch");
   const onlySlug = args.find((a) => !a.startsWith("--"));
@@ -1198,8 +1288,11 @@ async function main(): Promise<void> {
     console.log("[ingest] --rebuild: wiping database");
     await prisma.trip.deleteMany(); // cascades to Step/Media
   }
-
-  await ingestAll(onlySlug);
+  // --rebuild and --watch only re-ingest: no file renamed, no trip.json
+  // written (--watch would otherwise rename photos still being copied in).
+  if (rebuild || watch) await ingestAll(onlySlug);
+  else await updateTrips(onlySlug);
+  if (!watch) await pruneSourceIndexes(onlySlug);
   await refreshSite();
 
   if (watch) {

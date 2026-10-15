@@ -1,7 +1,7 @@
-// Finds duplicate photos within a trip, for `npm run ingest --
-// --find-duplicates`: exact copies (same content hash) and near copies — the
-// same picture resized, re-compressed or converted (e.g. a HEIC and its
-// exported JPEG), found by a perceptual difference hash. Report only.
+// Finds duplicate photos within a trip, for a plain ingest (see
+// reportDuplicates in index.ts): exact copies (same content hash) and near
+// copies — the same picture resized, re-compressed or converted (e.g. a HEIC
+// and its exported JPEG), found by a perceptual difference hash.
 import sharp from "sharp";
 
 // 16 rows of 17 gray pixels -> 16x16 left/right brightness comparisons.

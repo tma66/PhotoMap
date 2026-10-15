@@ -64,47 +64,55 @@ npm run build && npm start   # http://localhost:3000
    from a photo's "Description"/IPTC field (Apple Photos: right-click → Get
    Info → add a caption before exporting). A photo or video with no GPS, on a
    day with no other geotagged item to fall back on, is dropped rather than
-   guessed at. Byte-identical duplicate files are skipped.
+   guessed at.
 3. Ingest it:
    ```
-   npm run ingest -- japan-2025      # just this trip
+   npm run ingest japan-2025      # just this trip
    npm run ingest                    # every trip
-   npm run ingest -- --watch         # ingest, then keep watching assets/ for changes
-   npm run ingest -- --find-duplicates japan-2025   # list duplicate photos (omit the slug for every trip)
+   npm run watch                     # ingest, then keep watching assets/ for changes
    ```
-   `--find-duplicates` only reports: exact copies, and the same picture
-   resized, re-compressed or converted (e.g. a HEIC and its exported JPEG),
-   within each trip. Similar shots (bursts) and videos aren't compared.
+   `npm run` alone lists every command.
 
-### Filling in gaps (no-GPS photos, wrong location, wrong weather)
+### What an ingest does
 
-```
-npm run ingest -- --photos-template japan-2025   # or omit the slug for every trip
-```
+For each trip, `npm run ingest`:
 
-This (re)writes `assets/japan-2025/trip.json`'s `photos` block: one entry per
-photo, grouped by day, with `coord`/location/weather auto-filled for anything
-already geotagged, then re-ingests the trip so the site picks it up right
-away. Type in a `coord` (`"lat,lng"`) for anything left blank, then re-run
-the same command. An entry filed up to 7 days from the date its file records
-moves to that date (a hand-typed coord becomes that of the nearest photo
-within 6 hours; the file's own GPS stays). To fix a date that's
-wrong in the file (no date, a copy date, a screen recording's), move the
-entry in `trip.json`; the command keeps it there. Entries stay in time order within
-each date, and a changed `trip.json` is backed up as
-`trip.json.<timestamp>.bak`. **The `--` before the flag is required**: without it, npm
-swallows the flag and runs a plain ingest instead. In a folder with trip
-subfolders, `photos` is grouped by subfolder number first
-(`{ "1": { "2025-05-16": [...] }, "3": { ... } }`). A trip with no
-geotagged photo at all is left off the site until you fill in a `coord`.
+1. **Renames its files.** An image whose extension doesn't match its content
+   gets the right one (e.g. a JPEG named `.HEIC`, which Finder can't
+   preview), and each file gets its local date and time as a prefix
+   (`20221225-153803_IMG_4842.jpg`) so the folder sorts by time; a clashing
+   name gets `-2`. Files with no recorded date keep their name.
+2. **(Re)writes `trip.json`'s `photos` block:** one entry per photo, grouped
+   by day, with `coord`/location/weather auto-filled for anything geotagged.
+   A photo with no GPS takes the coord of the nearest-in-time photo that day.
+   Type a `coord` (`"lat,lng"`) for anything still blank, then re-run. An
+   entry filed up to 7 days from the date its file records moves to that
+   date (a hand-typed coord becomes that of the nearest photo within 6
+   hours; the file's own GPS stays). To fix a date that's wrong in the file
+   (no date, a copy date, a screen recording's), move the entry in
+   `trip.json`; ingest keeps it there. Entries stay in time order within
+   each date, and a changed `trip.json` is backed up as
+   `trip.json.<timestamp>.bak`. In a folder with trip subfolders, `photos`
+   is grouped by subfolder number first
+   (`{ "1": { "2025-05-16": [...] }, "3": { ... } }`).
+3. **Prints duplicate images** (exact copies, or the same picture resized,
+   re-compressed or converted, whatever the filename) with their paths,
+   largest copy first, so you can delete the ones you don't want; all copies
+   stay on the site until you do. Compared within each trip; videos aren't
+   compared.
+4. **Updates the site.** A trip with no geotagged photo at all is left off
+   until you fill in a `coord`. With no slug, trips whose folder is gone
+   are dropped too.
+
+`--watch` and `--rebuild` only do step 4: they never rename files or write
+`trip.json` (so `--watch` doesn't rename photos still being copied in).
+New photos picked up by `--watch` get renamed on the next `npm run ingest`.
 
 Change a `coord`
 and the next run re-derives that photo's `locationName`, `cityName` and
 weather; a value you typed yourself is kept as long as its coord stays the
-same. Weather is the daytime (9am–6pm) high and typical conditions; to
-refetch it for every photo, run `npm run ingest -- --refresh-weather [slug]`
-(replaces typed-in weather too; the old file is kept as
-`trip.json.<timestamp>.bak`). `cityName` (the biggest place within 25 km,
+same. Weather is the daytime (9am–6pm) high and typical conditions,
+fetched once per photo and kept. `cityName` (the biggest place within 25 km,
 so a neighborhood counts as its city) decides the dotted route lines: they
 only join consecutive steps in different cities, so type a different one to
 group or split steps.
@@ -145,10 +153,10 @@ is additive.
 
 - **Remove some photos:** delete the files from `assets/<slug>/`, then
   re-ingest that trip (or let `--watch` catch the deletion).
-- **Remove a whole trip:** delete `assets/<slug>/` entirely; `--watch` or a
-  plain ingest drops it from the site (skipped if `assets/` has no folders
-  at all, e.g. an unmounted drive).
-- **Rename a trip:** `npm run ingest -- --rename <old> <new>`. Renaming the
+- **Remove a whole trip:** delete `assets/<slug>/` entirely; `--watch`, a
+  plain ingest (no slug) drops it from the site (skipped if `assets/` has
+  no folders at all, e.g. an unmounted drive).
+- **Rename a trip:** `npm run rename <old> <new>`. Renaming the
   folder by hand works too, but re-encodes all its media into a new cache
   folder.
 
@@ -173,9 +181,9 @@ about up front:
   keyless Esri tiles (lower detail, no place search). **Changing this requires a rebuild** (`npm run build`),
   not just a restart, since Next.js inlines `NEXT_PUBLIC_*` vars into the
   client bundle at build time.
-- `INGEST_WEATHER=off`: skip fetching weather during
-  `--photos-template` and step-location changes (weather is otherwise cached
-  into `trip.json`, never fetched during a normal ingest).
+- `INGEST_WEATHER=off`: skip fetching weather during ingest and
+  step-location changes (fetched weather is kept in `trip.json`, so each
+  photo's is fetched once).
 - `UNITS`: `km` or `mi`.
 - `SITE_URL`: where ingest reaches the running site to refresh its pages
   right after an ingest (default `http://localhost:3000`). Pages are

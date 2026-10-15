@@ -2,7 +2,7 @@
   "photos": {
     "2025-06-10": [
       {
-        "file": "01-paris-eiffel.jpg",
+        "file": "20250610-091500_01-paris-eiffel.jpg",
         "coord": "48.8584,2.2944999999999998",
         "locationName": "Neuilly-sur-Seine",
         "cityName": "Paris",
@@ -10,7 +10,7 @@
         "weatherCode": 3
       },
       {
-        "file": "02-paris-louvre.jpg",
+        "file": "20250610-144000_02-paris-louvre.jpg",
         "coord": "48.8606,2.3376",
         "locationName": "Paris",
         "cityName": "Paris",
@@ -20,7 +20,7 @@
     ],
     "2025-06-11": [
       {
-        "file": "03-lyon-vieux.jpg",
+        "file": "20250611-123000_03-lyon-vieux.jpg",
         "coord": "45.7626,4.8271999999999995",
         "locationName": "Lyon",
         "cityName": "Lyon",
@@ -28,7 +28,7 @@
         "weatherCode": 0
       },
       {
-        "file": "04-lyon-fourviere.jpg",
+        "file": "20250611-180500_04-lyon-fourviere.jpg",
         "coord": "45.7622,4.8222",
         "locationName": "Lyon",
         "cityName": "Lyon",
@@ -38,7 +38,7 @@
     ],
     "2025-06-12": [
       {
-        "file": "05-nice-promenade.jpg",
+        "file": "20250612-110000_05-nice-promenade.jpg",
         "coord": "43.695299999999996,7.2654",
         "locationName": "Nice",
         "cityName": "Nice",
@@ -48,7 +48,7 @@
     ],
     "2025-06-13": [
       {
-        "file": "06-nice-vieux.jpg",
+        "file": "20250613-093000_06-nice-vieux.jpg",
         "coord": "43.6975,7.2769",
         "locationName": "Nice",
         "cityName": "Nice",

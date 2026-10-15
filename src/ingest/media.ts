@@ -97,6 +97,40 @@ export async function saveSourceIndex(cacheDir: string): Promise<void> {
     await writeFile(join(cacheDir, "sources.json"), JSON.stringify(index));
 }
 
+/** Re-keys renamed source files (size and mtime survive a rename), so they
+ * aren't re-read just to be hashed. */
+export async function renameSources(
+  cacheDir: string,
+  renames: [from: string, to: string][],
+): Promise<void> {
+  const index = await sourceIndex(cacheDir);
+  for (const key of Object.keys(index)) {
+    for (const [from, to] of renames) {
+      if (!key.startsWith(`${from}|`)) continue;
+      index[to + key.slice(from.length)] = index[key]!;
+      delete index[key];
+    }
+  }
+  await mkdir(cacheDir, { recursive: true });
+  await saveSourceIndex(cacheDir);
+}
+
+/** Drops entries for files that are gone or changed (their key's path, size
+ * or mtime no longer matches); returns how many. Run by --rebuild. */
+export async function pruneSourceIndex(cacheDir: string): Promise<number> {
+  const index = await sourceIndex(cacheDir);
+  let pruned = 0;
+  for (const key of Object.keys(index)) {
+    const path = key.split("|").slice(0, -2).join("|");
+    const now = await stat(path).catch(() => null);
+    if (now && key === `${path}|${now.size}|${now.mtimeMs}`) continue;
+    delete index[key];
+    pruned++;
+  }
+  if (pruned > 0) await saveSourceIndex(cacheDir);
+  return pruned;
+}
+
 /** A smaller copy of an existing derivative, if missing — backfills caches
  * written before that size existed without redoing HEIC conversion. */
 async function ensureResized(
@@ -162,19 +196,22 @@ const HEIF_BRANDS = new Set([
   "msf1",
 ]);
 
+/** A file's first 12 bytes — enough to tell its image type. */
+export async function readHead(path: string): Promise<Buffer> {
+  const fh = await open(path, "r");
+  try {
+    const head = Buffer.alloc(12);
+    await fh.read(head, 0, 12, 0);
+    return head;
+  } finally {
+    await fh.close();
+  }
+}
+
 /** By extension, or by content: some exports save a HEIC as `.jpeg`. */
 async function isHeif(absPath: string, source?: Buffer): Promise<boolean> {
   if (HEIC_EXT.has(extname(absPath).toLowerCase())) return true;
-  let head = source?.subarray(0, 12);
-  if (!head) {
-    const fh = await open(absPath, "r");
-    try {
-      head = Buffer.alloc(12);
-      await fh.read(head, 0, 12, 0);
-    } finally {
-      await fh.close();
-    }
-  }
+  const head = source?.subarray(0, 12) ?? (await readHead(absPath));
   return (
     head.toString("latin1", 4, 8) === "ftyp" &&
     HEIF_BRANDS.has(head.toString("latin1", 8, 12))
