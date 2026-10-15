@@ -76,6 +76,17 @@ export function isVideoExt(ext: string): boolean {
 // representation, corrected to a real instant later via localizeInstant.
 const QUICKTIME_LOCAL_DATETIME =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/;
+// "+05:00" (EXIF OffsetTimeOriginal) or "+0500" (QuickTime creationdate suffix).
+const UTC_OFFSET = /([+-])(\d{2}):?(\d{2})$/;
+
+export function parseUtcOffset(raw: unknown): number | undefined {
+  if (typeof raw !== "string") return undefined;
+  const m = UTC_OFFSET.exec(raw.trim());
+  if (!m) return undefined;
+  const minutes = Number(m[2]) * 60 + Number(m[3]);
+  return m[1] === "-" ? -minutes : minutes;
+}
+
 // "com.apple.quicktime.location.ISO6709", e.g. "+37.386051-122.083855+032.000/".
 const ISO6709_COORD = /^([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)/;
 
@@ -155,6 +166,7 @@ export async function readVideoMetadata(
       takenAt = fallbackMtime;
       takenAtIsExact = true;
     }
+    const takenAtIsMtime = !localParsed && !tags.creation_time;
 
     const coord = tags["com.apple.quicktime.location.ISO6709"]
       ? parseIso6709(tags["com.apple.quicktime.location.ISO6709"])
@@ -163,11 +175,17 @@ export async function readVideoMetadata(
     return {
       takenAt,
       takenAtIsExact,
+      takenAtIsMtime,
+      utcOffsetMin: localParsed ? parseUtcOffset(localDateTime) : undefined,
       lat: coord?.lat,
       lng: coord?.lng,
     };
   } catch {
-    return { takenAt: fallbackMtime, takenAtIsExact: true };
+    return {
+      takenAt: fallbackMtime,
+      takenAtIsExact: true,
+      takenAtIsMtime: true,
+    };
   }
 }
 
@@ -204,8 +222,23 @@ export async function readMediaMetadata(
     // naive local wall-clock value encoded as if it were UTC (the EXIF case
     // above) — the two need different treatment once a coordinate becomes
     // known, see src/ingest/timezone.ts.
-    return { takenAt, takenAtIsExact: exifDate == null, lat, lng, caption };
+    const utcOffsetMin = exifDate
+      ? parseUtcOffset(tags?.OffsetTimeOriginal ?? tags?.OffsetTime)
+      : undefined;
+    return {
+      takenAt,
+      takenAtIsExact: exifDate == null,
+      takenAtIsMtime: exifDate == null,
+      utcOffsetMin,
+      lat,
+      lng,
+      caption,
+    };
   } catch {
-    return { takenAt: fallbackMtime, takenAtIsExact: true };
+    return {
+      takenAt: fallbackMtime,
+      takenAtIsExact: true,
+      takenAtIsMtime: true,
+    };
   }
 }

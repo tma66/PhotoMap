@@ -25,10 +25,17 @@ export interface TaggedMedia {
    * this instead of re-testing the extension itself. */
   kind: "photo" | "video";
   takenAt: Date;
-  /** True when `takenAt` is a real absolute instant (file mtime, no EXIF
-   * date available) rather than a naive local wall-clock value encoded as
-   * if it were UTC (the normal EXIF case) — see src/ingest/timezone.ts. */
+  /** True when `takenAt` is a real absolute instant (a video's UTC-only
+   * creation_time, or the file mtime when there's no date) rather than a
+   * naive local wall-clock value encoded as if it were UTC (the normal EXIF
+   * case) — see src/ingest/timezone.ts. */
   takenAtIsExact?: boolean;
+  /** True when `takenAt` is the file's mtime (no date in its metadata):
+   * usually the copy time, so no real capture date to re-file it by. */
+  takenAtIsMtime?: boolean;
+  /** The capture's UTC offset in minutes, when recorded (EXIF
+   * OffsetTimeOriginal, or the QuickTime creationdate's suffix). */
+  utcOffsetMin?: number;
   lat?: number;
   lng?: number;
   caption?: string;

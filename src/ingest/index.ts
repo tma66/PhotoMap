@@ -22,9 +22,12 @@
 //     to do by hand; GPS-less photos need a coord typed in, after which
 //     locationName/weather auto-fill too (this and the site's --move-step
 //     are the only steps that fetch weather — see src/ingest/photo-overrides.ts),
-//     AND any photo whose local day was previously wrong (e.g. it only had
-//     mtime to go on) gets re-filed under the now-correct date. Each
-//     affected trip is then re-ingested into the DB, so the site reflects
+//     AND an entry still filed under the UTC date older ingests gave a file
+//     whose only time is UTC (a video with just creation_time) moves to its
+//     local date, its weather blanked to be refetched; entries you moved to
+//     another date, and copy-date (mtime) files, stay. Each date's entries
+//     are sorted by time, and trip.json.<timestamp>.bak is kept when the
+//     file changes. Each affected trip is then re-ingested into the DB, so the site reflects
 //     the refreshed trip.json (and any photos removed from assets/) right
 //     away. The leading `--` is required (without it, npm won't forward the
 //     flag and just runs a plain ingest instead).
@@ -63,18 +66,23 @@ import {
   readVideoMetadata,
 } from "./exif";
 import { mapWithConcurrency } from "./concurrency";
-import { localizeInstant } from "./timezone";
+import { localizeByNearestOffset, localizeInstant } from "./timezone";
 import { groupIntoSteps, inferTransportMode, type TaggedMedia } from "./steps";
 import { cityNameFor, countryCodeForPoint, nearestPlaceName } from "./geocode";
 import {
   allEntries,
+  DAY_MS,
   namesFor,
   buildOverrideIndex,
   buildPhotoTemplate,
   dayGroups,
   filedDates,
+  moveEntries,
   parseCoord,
   refreshChangedCoords,
+  sortEntriesByTime,
+  staleUtcMoves,
+  type PhotoOverridesByDay,
   type PhotosBlock,
 } from "./photo-overrides";
 import { processImage, processVideo, saveSourceIndex } from "./media";
@@ -87,7 +95,6 @@ import { HEAVEN_PLACE, heavenName, isHeaven } from "../lib/heaven";
 const ASSETS_DIR = process.env.ASSETS_DIR ?? "./assets";
 const CACHE_DIR = process.env.CACHE_DIR ?? "./data/cache";
 const WEATHER_ENABLED = process.env.INGEST_WEATHER !== "off";
-const DAY_MS = 86_400_000;
 const TRIP_DIR_NAME = /^[1-9]\d*$/; // a trip subfolder: "1", "3", ...
 
 // trip.json, .DS_Store, etc. aren't media.
@@ -194,6 +201,23 @@ async function loadTaggedMedia(
   tripDir: string,
   photoOverrides: PhotosBlock | undefined,
 ): Promise<TaggedMedia[]> {
+  const media = await readTaggedMedia(tripDir, photoOverrides);
+  const utcDays = media.map((m) => m.takenAt.toISOString().slice(0, 10));
+  localizeExactInstants(media);
+  // A date still the stale UTC one isn't a correction: keep the local date
+  // (--photos-template re-files it in trip.json too).
+  const stale = staleUtcMoves(media, utcDays, photoOverrides);
+  applyFiledDates(media, photoOverrides, stale);
+  media.sort((a, b) => a.takenAt.getTime() - b.takenAt.getTime());
+  return media;
+}
+
+/** Each media file's metadata, with hand-typed coords merged in; exact
+ * instants are still UTC (see localizeExactInstants). */
+async function readTaggedMedia(
+  tripDir: string,
+  photoOverrides: PhotosBlock | undefined,
+): Promise<TaggedMedia[]> {
   const entries = await readdir(tripDir, { withFileTypes: true });
   const files = entries.filter((e) => e.isFile() && isMediaFile(e.name));
 
@@ -224,7 +248,10 @@ async function loadTaggedMedia(
       m.lng = coord.lng;
     }
   }
+  return media;
+}
 
+function localizeExactInstants(media: TaggedMedia[]): void {
   // A photo with no EXIF date at all falls back to its file's mtime — a
   // real absolute instant, unlike the naive-local-time-as-UTC encoding every
   // EXIF-dated photo uses (see exif.ts). Once its location is known (real
@@ -237,20 +264,27 @@ async function loadTaggedMedia(
       m.takenAt = localizeInstant(m.takenAt, { lat: m.lat, lng: m.lng });
     }
   }
+  // No coordinate: use the UTC offset of the nearest item that recorded one.
+  localizeByNearestOffset(media);
+}
 
+function applyFiledDates(
+  media: TaggedMedia[],
+  photoOverrides: PhotosBlock | undefined,
+  skip: ReadonlyMap<string, string> = new Map(),
+): void {
   // The date a photo is filed under in trip.json is its date: moving an
   // entry to another date there corrects a wrong one. The time of day is
-  // kept, so photos on that day still sort among each other.
+  // kept, so photos on that day still sort among each other. Files in
+  // `skip` keep their own date.
   const dates = filedDates(photoOverrides);
   for (const m of media) {
+    if (skip.has(basename(m.sourcePath))) continue;
     const day = dates.get(basename(m.sourcePath));
     if (day && day !== m.takenAt.toISOString().slice(0, 10)) {
       m.takenAt = new Date(Date.parse(day) + (m.takenAt.getTime() % DAY_MS));
     }
   }
-
-  media.sort((a, b) => a.takenAt.getTime() - b.takenAt.getTime());
-  return media;
 }
 
 /** One folder can hold several trips (one per numbered subfolder — see
@@ -501,6 +535,9 @@ async function writeTrip(
   }
 }
 
+const takenAtByFile = (media: TaggedMedia[]) =>
+  new Map(media.map((m) => [basename(m.sourcePath), m.takenAt]));
+
 /**
  * Fetches weather for any entry that has a `coord` but is still missing
  * `weatherTempF`/`weatherCode` — done here (network I/O) rather than in
@@ -514,9 +551,7 @@ async function fillWeatherOverrides(
   media: TaggedMedia[],
   replace = false,
 ): Promise<number> {
-  const takenAtByFile = new Map(
-    media.map((m) => [basename(m.sourcePath), m.takenAt]),
-  );
+  const takenAtOf = takenAtByFile(media);
 
   const needsWeather = allEntries(photos).filter(
     (entry) =>
@@ -531,7 +566,7 @@ async function fillWeatherOverrides(
     needsWeather,
     async (entry) => {
       const coord = parseCoord(entry.coord);
-      const takenAt = takenAtByFile.get(entry.file);
+      const takenAt = takenAtOf.get(entry.file);
       if (!coord || !takenAt || isHeaven(coord)) return;
 
       const key = `${coord.lat.toFixed(4)},${coord.lng.toFixed(4)},${takenAt.toISOString().slice(0, 10)}`;
@@ -610,12 +645,41 @@ async function writePhotoTemplate(slug: string): Promise<void> {
 
   const overrides = await readTripOverrides(tripDir);
   const { isMultiTrip, trips } = await listTrips(slug);
-  const mediaByTrip = await Promise.all(
-    trips.map(async (t) => ({
-      number: t.number,
-      media: await loadTaggedMedia(t.dir, overrides.photos),
-    })),
+  // loadTaggedMedia's steps, with stale UTC-dated entries re-filed (see
+  // staleUtcMoves) before the filed dates are applied.
+  const mediaByTrip: { number: number; media: TaggedMedia[] }[] = [];
+  const read = await Promise.all(
+    trips.map((t) => readTaggedMedia(t.dir, overrides.photos)),
   );
+  for (const [i, t] of trips.entries()) {
+    const media = read[i]!;
+    const utcDays = media.map((m) => m.takenAt.toISOString().slice(0, 10));
+    localizeExactInstants(media);
+    const own = (
+      isMultiTrip ? overrides.photos?.[String(t.number)] : overrides.photos
+    ) as PhotoOverridesByDay | undefined;
+    const moves = own
+      ? staleUtcMoves(media, utcDays, own)
+      : new Map<string, string>();
+    if (own) {
+      moveEntries(own, moves);
+      // Its weather was the old date's. Blank, it's fetched below or, with
+      // weather off or a failed fetch, on a later run.
+      for (const e of allEntries(own)) {
+        if (!moves.has(e.file)) continue;
+        e.weatherTempF = null;
+        e.weatherCode = null;
+      }
+    }
+    for (const [file, day] of moves) {
+      console.log(
+        `[ingest] ${tripLabel(slug, t.number, isMultiTrip)} ${file}: moved to ${day} (was its UTC date)`,
+      );
+    }
+    applyFiledDates(media, overrides.photos);
+    media.sort((a, b) => a.takenAt.getTime() - b.takenAt.getTime());
+    mediaByTrip.push({ number: t.number, media });
+  }
   const media = mediaByTrip.flatMap((t) => t.media);
 
   if (media.length === 0) {
@@ -627,14 +691,17 @@ async function writePhotoTemplate(slug: string): Promise<void> {
   // first ({ "1": { "2025-05-16": [...] }, "3": ... }); a single trip keeps
   // the flat by-day layout. Entries are matched by filename either way, so
   // anything already filled in carries over when photos change trip.
+  // Each date's entries in time order, as the site shows them.
+  const sortedTemplate = (tripMedia: TaggedMedia[]) => {
+    const byDay = buildPhotoTemplate(tripMedia, overrides.photos);
+    sortEntriesByTime(byDay, takenAtByFile(tripMedia));
+    return byDay;
+  };
   const photos: PhotosBlock = isMultiTrip
     ? Object.fromEntries(
-        mediaByTrip.map((t) => [
-          String(t.number),
-          buildPhotoTemplate(t.media, overrides.photos),
-        ]),
+        mediaByTrip.map((t) => [String(t.number), sortedTemplate(t.media)]),
       )
-    : buildPhotoTemplate(media, overrides.photos);
+    : sortedTemplate(media);
 
   const lastCoords = await readTemplateCoords(slug);
   const refreshed = refreshChangedCoords(photos, lastCoords, WEATHER_ENABLED);
@@ -651,7 +718,15 @@ async function writePhotoTemplate(slug: string): Promise<void> {
   const needingInfo = allEntries(photos).filter((e) => e.coord == null).length;
 
   const updated: TripOverrides = { ...overrides, photos };
-  await writeFile(tripJsonPath, JSON.stringify(updated, null, 2) + "\n");
+  const json = JSON.stringify(updated, null, 2) + "\n";
+  const current = await readFile(tripJsonPath, "utf8").catch(() => null);
+  if (current != null && current !== json) {
+    const stamp = new Date().toISOString().replace(/[-:]|\..*/g, "");
+    const backupPath = `${tripJsonPath}.${stamp}.bak`;
+    await copyFile(tripJsonPath, backupPath);
+    console.log(`[ingest] ${slug}: trip.json changed; backup at ${backupPath}`);
+  }
+  await writeFile(tripJsonPath, json);
 
   // With weather off, a refreshed photo's weather is still the old coord's —
   // leave it looking changed so a later run with weather on refetches it.

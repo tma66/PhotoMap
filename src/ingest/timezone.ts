@@ -49,3 +49,40 @@ export function localizeInstant(instant: Date, coord: LatLng): Date {
     ),
   );
 }
+
+/**
+ * For media whose `takenAt` is a real instant but which has no coordinate to
+ * localize at (e.g. a video with only QuickTime's UTC creation_time): borrow
+ * the UTC offset of the item nearest in time that recorded one, and
+ * re-express the instant as local time in the same encoding. Items with no
+ * such neighbour are left as UTC. Mutates `media`.
+ */
+export function localizeByNearestOffset(
+  media: {
+    takenAt: Date;
+    takenAtIsExact?: boolean;
+    utcOffsetMin?: number;
+    lat?: number;
+  }[],
+): void {
+  const MIN = 60_000;
+  // Real instants of the items with a recorded offset (their takenAt is
+  // naive local time, so subtract the offset).
+  const anchors = media
+    .filter((m) => !m.takenAtIsExact && m.utcOffsetMin != null)
+    .map((m) => ({
+      instant: m.takenAt.getTime() - m.utcOffsetMin! * MIN,
+      offset: m.utcOffsetMin!,
+    }));
+  if (anchors.length === 0) return;
+
+  for (const m of media) {
+    if (!m.takenAtIsExact || m.lat != null) continue;
+    const t = m.takenAt.getTime();
+    let nearest = anchors[0]!;
+    for (const a of anchors) {
+      if (Math.abs(a.instant - t) < Math.abs(nearest.instant - t)) nearest = a;
+    }
+    m.takenAt = new Date(t + nearest.offset * MIN);
+  }
+}

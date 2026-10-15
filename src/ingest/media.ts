@@ -7,6 +7,7 @@ import {
   access,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   rm,
   stat,
@@ -147,6 +148,38 @@ async function heicToJpegBuffer(absPath: string): Promise<Buffer> {
 }
 
 const HEIC_EXT = new Set([".heic", ".heif"]);
+// HEIF brands (ISO BMFF `ftyp` box) sharp can't decode; AVIF ("avif") it can.
+const HEIF_BRANDS = new Set([
+  "heic",
+  "heix",
+  "heim",
+  "heis",
+  "hevc",
+  "hevx",
+  "hevm",
+  "hevs",
+  "mif1",
+  "msf1",
+]);
+
+/** By extension, or by content: some exports save a HEIC as `.jpeg`. */
+async function isHeif(absPath: string, source?: Buffer): Promise<boolean> {
+  if (HEIC_EXT.has(extname(absPath).toLowerCase())) return true;
+  let head = source?.subarray(0, 12);
+  if (!head) {
+    const fh = await open(absPath, "r");
+    try {
+      head = Buffer.alloc(12);
+      await fh.read(head, 0, 12, 0);
+    } finally {
+      await fh.close();
+    }
+  }
+  return (
+    head.toString("latin1", 4, 8) === "ftyp" &&
+    HEIF_BRANDS.has(head.toString("latin1", 8, 12))
+  );
+}
 
 /** Resizes an already-decoded image buffer into `cacheDir/<hash>-thumb.jpg`,
  * `-pin.jpg`, `-card.jpg` and `-display.jpg`, plus a tiny inline blur placeholder — shared by
@@ -212,8 +245,7 @@ export async function processImage(
     return { hash, ...cached };
   }
 
-  const ext = extname(absPath).toLowerCase();
-  const decodable = HEIC_EXT.has(ext)
+  const decodable = (await isHeif(absPath, source))
     ? await heicToJpegBuffer(absPath)
     : (source ?? (await readFile(absPath)));
 

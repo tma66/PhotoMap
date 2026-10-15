@@ -86,7 +86,10 @@ This (re)writes `assets/japan-2025/trip.json`'s `photos` block: one entry per
 photo, grouped by day, with `coord`/location/weather auto-filled for anything
 already geotagged, then re-ingests the trip so the site picks it up right
 away. Type in a `coord` (`"lat,lng"`) for anything left blank, then re-run
-the same command. **The `--` before the flag is required**: without it, npm
+the same command. To fix a wrong date, move the entry to the right date in
+`trip.json`; the command keeps it there. Entries stay in time order within
+each date, and a changed `trip.json` is backed up as
+`trip.json.<timestamp>.bak`. **The `--` before the flag is required**: without it, npm
 swallows the flag and runs a plain ingest instead. In a folder with trip
 subfolders, `photos` is grouped by subfolder number first
 (`{ "1": { "2025-05-16": [...] }, "3": { ... } }`). A trip with no
@@ -174,6 +177,13 @@ about up front:
 - `SITE_URL`: where ingest reaches the running site to refresh its pages
   right after an ingest (default `http://localhost:3000`). Pages are
   otherwise built once and only change after an ingest or a rebuild.
+
+## Development
+
+```
+npm test          # vitest
+npm run lint      # eslint
+```
 
 ## License
 

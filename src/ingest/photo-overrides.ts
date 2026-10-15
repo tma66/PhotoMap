@@ -135,9 +135,54 @@ export function filedDates(
 }
 
 /**
+ * Moves each entry named in `moves` (file -> date) to the end of that date's
+ * list, every field unchanged. A date left empty is removed; dates stay
+ * sorted. Mutates `byDay`.
+ */
+export function moveEntries(
+  byDay: PhotoOverridesByDay,
+  moves: Map<string, string>,
+): void {
+  for (const [day, entries] of Object.entries(byDay)) {
+    for (const entry of entries.filter((e) => moves.has(e.file))) {
+      const to = moves.get(entry.file)!;
+      if (to === day) continue;
+      entries.splice(entries.indexOf(entry), 1);
+      (byDay[to] ??= []).push(entry);
+    }
+  }
+  const sorted = Object.entries(byDay)
+    .filter(([, entries]) => entries.length > 0)
+    .sort(([a], [b]) => a.localeCompare(b));
+  for (const day of Object.keys(byDay)) delete byDay[day];
+  Object.assign(byDay, Object.fromEntries(sorted));
+}
+
+export const DAY_MS = 86_400_000;
+
+/**
+ * Sorts each date's entries by time of day, the order the site shows them
+ * in (a filed date keeps the photo's own time of day). Entries with no known
+ * time keep their relative order, after the rest. Mutates `byDay`.
+ */
+export function sortEntriesByTime(
+  byDay: PhotoOverridesByDay,
+  takenAtByFile: Map<string, Date>,
+): void {
+  const timeOfDay = (file: string) => {
+    const t = takenAtByFile.get(file)?.getTime();
+    return t == null ? Infinity : ((t % DAY_MS) + DAY_MS) % DAY_MS;
+  };
+  for (const entries of Object.values(byDay)) {
+    entries.sort((a, b) => timeOfDay(a.file) - timeOfDay(b.file));
+  }
+}
+
+/**
  * Builds/updates one trip's "photos" block of trip.json. Existing entries
  * (matched by filename, wherever they were filed) stay exactly where they
- * are — same date, same order — with only a missing locationName/cityName filled in
+ * are — same date, same order (index.ts then re-sorts each date by time,
+ * see sortEntriesByTime) — with only a missing locationName/cityName filled in
  * below (refreshing names/weather after a coord change, and fetching
  * weather, is the caller's job — see refreshChangedCoords and `index.ts`).
  * Entries for photos no longer on disk are dropped, and each new photo gets
@@ -190,4 +235,34 @@ export function buildPhotoTemplate(
   return Object.fromEntries(
     Object.entries(result).sort(([a], [b]) => a.localeCompare(b)),
   );
+}
+
+/**
+ * The entries in `block` still filed under the raw UTC date of a file whose
+ * only time is a UTC instant (e.g. a video with just creation_time) — where
+ * older ingests filed them — mapped to the local date they get now.
+ * `utcDays` are the media's dates before localizeExactInstants. A copy-date
+ * (mtime) file has no real date to re-file by, and an entry moved to any
+ * other date by hand isn't stale, so both stay where they are.
+ */
+export function staleUtcMoves(
+  media: TaggedMedia[],
+  utcDays: string[],
+  block: PhotosBlock | undefined,
+): Map<string, string> {
+  const filed = filedDates(block);
+  const moves = new Map<string, string>();
+  media.forEach((m, i) => {
+    const file = basename(m.sourcePath);
+    const day = m.takenAt.toISOString().slice(0, 10);
+    if (
+      m.takenAtIsExact &&
+      !m.takenAtIsMtime &&
+      filed.get(file) === utcDays[i] &&
+      day !== utcDays[i]
+    ) {
+      moves.set(file, day);
+    }
+  });
+  return moves;
 }

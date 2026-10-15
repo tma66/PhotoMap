@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildPhotoTemplate,
   filedDates,
+  moveEntries,
   refreshChangedCoords,
+  sortEntriesByTime,
+  staleUtcMoves,
 } from "../src/ingest/photo-overrides";
 import type { TaggedMedia } from "../src/ingest/steps";
 
@@ -144,5 +147,104 @@ describe("refreshChangedCoords", () => {
     const e = withCoord(ROME, "Paris");
     refreshChangedCoords({ "2026-05-20": [e] }, { "A.jpg": PARIS }, false);
     expect(e.weatherTempF).toBe(70);
+  });
+});
+
+describe("moveEntries", () => {
+  it("moves only the named entries, every field kept, and drops emptied dates", () => {
+    const video = {
+      file: "IMG_9545.MOV",
+      coord: "1.35,103.82",
+      locationName: "Marina Bay",
+      cityName: "Singapore",
+      weatherTempF: 61,
+      weatherCode: 2,
+    };
+    const stay = { ...video, file: "IMG_9600.HEIC" };
+    const byDay = {
+      "2024-11-29": [stay],
+      "2024-11-28": [video],
+      "2024-11-27": [{ ...video, file: "IMG_9544.MOV" }],
+    };
+    moveEntries(byDay, new Map([["IMG_9545.MOV", "2024-11-27"]]));
+    expect(Object.keys(byDay)).toEqual(["2024-11-27", "2024-11-29"]);
+    expect(byDay["2024-11-27"]![1]).toEqual(video);
+    expect(byDay["2024-11-29"]).toEqual([stay]);
+  });
+});
+
+describe("sortEntriesByTime", () => {
+  it("orders each date by time of day, unknown times last in their old order", () => {
+    const e = (file: string) => ({
+      file,
+      coord: null,
+      locationName: null,
+      cityName: null,
+    });
+    const byDay = {
+      "2024-11-27": [e("late"), e("unknownA"), e("early"), e("unknownB")],
+      "2024-11-28": [e("movedByHand"), e("morning")],
+    };
+    const at = new Map([
+      ["late", new Date("2024-11-27T19:09:36Z")],
+      ["early", new Date("2024-11-27T17:44:23Z")],
+      // Filed under 11/28 by hand; only its time of day counts.
+      ["movedByHand", new Date("2024-12-02T10:00:00Z")],
+      ["morning", new Date("2024-11-28T08:15:03Z")],
+    ]);
+    sortEntriesByTime(byDay, at);
+    expect(byDay["2024-11-27"].map((x) => x.file)).toEqual([
+      "early",
+      "late",
+      "unknownA",
+      "unknownB",
+    ]);
+    expect(byDay["2024-11-28"].map((x) => x.file)).toEqual([
+      "morning",
+      "movedByHand",
+    ]);
+  });
+});
+
+describe("staleUtcMoves", () => {
+  const e = (file: string) => ({
+    file,
+    coord: null,
+    locationName: null,
+    cityName: null,
+  });
+  // Already localized (UTC-8): 2024-11-28 03:09 UTC -> 11/27 19:09 local.
+  const local = new Date("2024-11-27T19:09:36Z");
+  const utcDay = "2024-11-28";
+  const m = (file: string, extra: Partial<TaggedMedia> = {}): TaggedMedia => ({
+    sourcePath: `/trip/3/${file}`,
+    kind: "video",
+    takenAt: local,
+    takenAtIsExact: true,
+    ...extra,
+  });
+
+  it("moves an entry still under its UTC date to its local date", () => {
+    const byDay = { [utcDay]: [e("IMG_9545.MOV")] };
+    expect(staleUtcMoves([m("IMG_9545.MOV")], [utcDay], byDay)).toEqual(
+      new Map([["IMG_9545.MOV", "2024-11-27"]]),
+    );
+  });
+
+  it("leaves hand-moved entries, copy-date files and local-time media alone", () => {
+    const byDay = {
+      "2024-11-26": [e("handMoved.MOV")],
+      [utcDay]: [e("copied.MOV"), e("photo.HEIC")],
+    };
+    const moves = staleUtcMoves(
+      [
+        m("handMoved.MOV"),
+        m("copied.MOV", { takenAtIsMtime: true }),
+        m("photo.HEIC", { takenAtIsExact: false }),
+      ],
+      [utcDay, utcDay, utcDay],
+      byDay,
+    );
+    expect(moves.size).toBe(0);
   });
 });
