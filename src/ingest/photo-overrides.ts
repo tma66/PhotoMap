@@ -173,7 +173,7 @@ export const DAY_MS = 86_400_000;
 /**
  * Sorts each date's entries by time of day, the order the site shows them
  * in (a filed date keeps the photo's own time of day). Entries with no known
- * time keep their relative order, after the rest. Mutates `byDay`.
+ * time go after the rest, by name. Mutates `byDay`.
  */
 export function sortEntriesByTime(
   byDay: PhotoOverridesByDay,
@@ -184,7 +184,14 @@ export function sortEntriesByTime(
     return t == null ? Infinity : ((t % DAY_MS) + DAY_MS) % DAY_MS;
   };
   for (const entries of Object.values(byDay)) {
-    entries.sort((a, b) => timeOfDay(a.file) - timeOfDay(b.file));
+    entries.sort((a, b) => {
+      const [ta, tb] = [timeOfDay(a.file), timeOfDay(b.file)];
+      return ta === tb
+        ? ta === Infinity
+          ? a.file.localeCompare(b.file)
+          : 0
+        : ta - tb;
+    });
   }
 }
 
@@ -280,6 +287,145 @@ export function nearestCoord(
     }
   }
   return best && `${best.lat},${best.lng}`;
+}
+
+const MAX_IMG_GAP = 500;
+
+/** A camera file's IMG_#### counter, ignoring any date prefix
+ * ("20240620-163600_IMG_7050.jpeg" → 7050). */
+function imgNumber(file: string): number | undefined {
+  const match = /IMG_(\d{4})(?!\d)/i.exec(file);
+  return match ? Number(match[1]) : undefined;
+}
+
+/** `a - b` between IMG_#### counters, wrapping 9999 → 0001 (no 0000, so
+ * the counter cycles every 9,999). */
+const imgGap = (a: number, b: number) =>
+  ((((a - b) % 9_999) + 14_998) % 9_999) - 4_999;
+
+interface TimedImg {
+  item: TaggedMedia;
+  n: number;
+  day: string;
+}
+
+/** Items with a real time and an IMG_#### counter. */
+function timedImgs(media: TaggedMedia[]): TimedImg[] {
+  return media.flatMap((m) => {
+    const n = m.takenAtIsMtime ? undefined : imgNumber(basename(m.sourcePath));
+    return n == null
+      ? []
+      : [{ item: m, n, day: m.takenAt.toISOString().slice(0, 10) }];
+  });
+}
+
+/** The nearest of `timed` below and above counter `n`, within MAX_IMG_GAP,
+ * and the nearer of the two (below on a tie). `gap` is `n - t.n`. */
+function imgNeighbours(n: number, timed: TimedImg[]) {
+  type Hit = TimedImg & { gap: number };
+  let below: Hit | undefined;
+  let above: Hit | undefined;
+  for (const t of timed) {
+    const gap = imgGap(n, t.n);
+    if (gap >= 0 && gap <= MAX_IMG_GAP && (!below || gap < below.gap)) {
+      below = { ...t, gap };
+    } else if (gap < 0 && -gap <= MAX_IMG_GAP && (!above || gap > above.gap)) {
+      above = { ...t, gap };
+    }
+  }
+  const nearest = above && (!below || -above.gap < below.gap) ? above : below;
+  return { below, above, nearest };
+}
+
+/** The cameras of the timed files within MAX_IMG_GAP of counter `n`. More
+ * than one means two phones' counters overlap there, so `n` can't say which
+ * phone an undated file came from. */
+function camerasNear(n: number, timed: TimedImg[]): string[] {
+  const cameras = new Set<string>();
+  for (const t of timed) {
+    if (t.item.camera && Math.abs(imgGap(n, t.n)) <= MAX_IMG_GAP) {
+      cameras.add(t.item.camera);
+    }
+  }
+  return [...cameras];
+}
+
+const MAX_AUTO_FILE_GAP = 5;
+
+/**
+ * Dates for copy-date (mtime) files still on their copy date (`candidates`),
+ * from the timed files in `media` with an IMG_#### within MAX_IMG_GAP: the
+ * nearest one's date when it's ≤ MAX_AUTO_FILE_GAP away, else the date shared
+ * by the nearest below and above it. `unsure` maps the rest that have a
+ * timed neighbour to those neighbours, for a hand move — and, with the
+ * cameras, any whose number range more than one camera uses.
+ */
+export interface UnsureFile {
+  near: { day: string; n: number }[];
+  cameras?: string[];
+}
+
+export function undatedDays(
+  media: TaggedMedia[],
+  candidates: Set<TaggedMedia>,
+): {
+  moves: Map<string, string>;
+  unsure: Map<string, UnsureFile>;
+} {
+  const timed = timedImgs(media);
+  const moves = new Map<string, string>();
+  const unsure = new Map<string, UnsureFile>();
+  for (const m of candidates) {
+    const file = basename(m.sourcePath);
+    const n = imgNumber(file);
+    if (n == null) continue;
+    const { below, above, nearest } = imgNeighbours(n, timed);
+    if (!nearest) continue;
+    const cameras = camerasNear(n, timed);
+    const day =
+      cameras.length > 1
+        ? undefined // the neighbours may be another phone's
+        : Math.abs(nearest.gap) <= MAX_AUTO_FILE_GAP
+          ? nearest.day
+          : below && above && below.day === above.day
+            ? below.day
+            : undefined;
+    if (day) {
+      moves.set(file, day);
+      continue;
+    }
+    unsure.set(file, {
+      near: [below, above]
+        .filter((t) => t != null)
+        .map(({ day, n }) => ({ day, n })),
+      ...(cameras.length > 1 && { cameras }),
+    });
+  }
+  return { moves, unsure };
+}
+
+/**
+ * Copy-date (mtime) items have no real time. Each one on a date with a timed
+ * item from the same camera — the nearest IMG_#### within MAX_IMG_GAP,
+ * wrapping 9999 → 0001 — takes that item's time, offset by the number gap in
+ * ms so it sorts before or after it; then it's placed, ordered and given a
+ * nearest coord like a timed item. Others, and any whose number range more
+ * than one camera uses (see camerasNear), keep their mtime. Mutates `media`.
+ */
+export function estimateUndatedTimes(media: TaggedMedia[]): void {
+  const timed = timedImgs(media);
+  for (const m of media) {
+    const n = m.takenAtIsMtime ? imgNumber(basename(m.sourcePath)) : undefined;
+    if (n == null || camerasNear(n, timed).length > 1) continue;
+    const day = m.takenAt.toISOString().slice(0, 10);
+    const { nearest } = imgNeighbours(
+      n,
+      timed.filter((t) => t.day === day),
+    );
+    if (!nearest) continue;
+    m.takenAt = new Date(nearest.item.takenAt.getTime() + nearest.gap);
+    m.takenAtIsEstimated = true;
+  }
 }
 
 const MAX_MOVE_DAYS = 7;

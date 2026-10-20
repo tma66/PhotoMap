@@ -119,12 +119,24 @@ interface FfprobeOutput {
       creation_time?: string;
       "com.apple.quicktime.creationdate"?: string;
       "com.apple.quicktime.location.ISO6709"?: string;
+      "com.apple.quicktime.make"?: string;
+      "com.apple.quicktime.model"?: string;
       // Plain MP4 ©day/©xyz — what some re-saved iPhone videos carry instead
       // of the com.apple.quicktime.* pair, same formats.
       date?: string;
       location?: string;
     };
   };
+}
+
+/** "Apple iPhone 15 Pro" from make + model tags, when either is set. */
+function cameraName(make: unknown, model: unknown): string | undefined {
+  const name = [make, model]
+    .filter((v): v is string => typeof v === "string")
+    .map((v) => v.trim())
+    .filter(Boolean)
+    .join(" ");
+  return name || undefined;
 }
 
 /**
@@ -186,6 +198,10 @@ export async function readVideoMetadata(
       utcOffsetMin: localParsed ? parseUtcOffset(localDateTime) : undefined,
       lat: coord?.lat,
       lng: coord?.lng,
+      camera: cameraName(
+        tags["com.apple.quicktime.make"],
+        tags["com.apple.quicktime.model"],
+      ),
     };
   } catch {
     return {
@@ -240,6 +256,7 @@ export async function readMediaMetadata(
       lat,
       lng,
       caption,
+      camera: cameraName(tags?.Make, tags?.Model),
     };
   } catch {
     return {

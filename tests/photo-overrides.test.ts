@@ -8,6 +8,8 @@ import {
   isSameCoord,
   nearestCoord,
   misfiledMoves,
+  estimateUndatedTimes,
+  undatedDays,
 } from "../src/ingest/photo-overrides";
 import type { TaggedMedia } from "../src/ingest/steps";
 
@@ -176,7 +178,7 @@ describe("moveEntries", () => {
 });
 
 describe("sortEntriesByTime", () => {
-  it("orders each date by time of day, unknown times last in their old order", () => {
+  it("orders each date by time of day, unknown times last by name", () => {
     const e = (file: string) => ({
       file,
       coord: null,
@@ -184,7 +186,7 @@ describe("sortEntriesByTime", () => {
       cityName: null,
     });
     const byDay = {
-      "2024-11-27": [e("late"), e("unknownA"), e("early"), e("unknownB")],
+      "2024-11-27": [e("late"), e("unknownB"), e("early"), e("unknownA")],
       "2024-11-28": [e("movedByHand"), e("morning")],
     };
     const at = new Map([
@@ -205,6 +207,152 @@ describe("sortEntriesByTime", () => {
       "morning",
       "movedByHand",
     ]);
+  });
+});
+
+describe("estimateUndatedTimes", () => {
+  const copied = (file: string, t: string) => ({
+    ...photo(file, t),
+    takenAtIsMtime: true,
+  });
+
+  it("gives a copy-date file its nearest same-day IMG number's time, ordered by number", () => {
+    const media = [
+      photo("20240618-092900_IMG_9647.MP4", "2024-06-18T09:29:00Z"),
+      photo("20240618-115800_IMG_9658.jpg", "2024-06-18T11:58:00Z"),
+      // Another phone's counter, over 500 away.
+      photo("20240618-092000_IMG_6943.mov", "2024-06-18T09:20:00Z"),
+      copied("IMG_9640.MOV", "2024-06-18T19:21:00Z"),
+      copied("IMG_9644.MOV", "2024-06-18T19:22:00Z"),
+      copied("IMG_9660.MOV", "2024-06-18T19:23:00Z"),
+    ];
+    estimateUndatedTimes(media);
+    const at = (i: number) => media[i]!.takenAt.getTime();
+    expect(at(3)).toBe(Date.parse("2024-06-18T09:29:00Z") - 7);
+    expect(at(4)).toBe(Date.parse("2024-06-18T09:29:00Z") - 3);
+    expect(at(5)).toBe(Date.parse("2024-06-18T11:58:00Z") + 2);
+    expect(media.slice(3).every((m) => m.takenAtIsEstimated)).toBe(true);
+  });
+
+  it("leaves a file alone where two cameras' numbers overlap", () => {
+    const media = [
+      { ...photo("IMG_9647.jpg", "2024-06-18T09:29:00Z"), camera: "A" },
+      { ...photo("IMG_9900.jpg", "2024-06-19T09:00:00Z"), camera: "B" },
+      copied("IMG_9640.MOV", "2024-06-18T19:21:00Z"),
+    ];
+    estimateUndatedTimes(media);
+    expect(media[2]!.takenAtIsEstimated).toBeUndefined();
+  });
+
+  it("wraps 9999 to 0001, and leaves files with no same-day match alone", () => {
+    const media = [
+      photo("20240620-145600_IMG_0004.jpg", "2024-06-20T14:56:00Z"),
+      copied("IMG_9990.MOV", "2024-06-20T19:21:00Z"),
+      copied("IMG_9500.MOV", "2024-06-20T19:21:00Z"),
+      copied("IMG_0005.MOV", "2026-10-19T04:21:00Z"),
+      copied("clip.MOV", "2024-06-20T19:21:00Z"),
+    ];
+    estimateUndatedTimes(media);
+    expect(media[1]!.takenAt.getTime()).toBe(
+      Date.parse("2024-06-20T14:56:00Z") - 13,
+    );
+    for (const m of media.slice(2))
+      expect(m.takenAtIsEstimated).toBeUndefined();
+    expect(media[3]!.takenAt.toISOString()).toBe("2026-10-19T04:21:00.000Z");
+  });
+});
+
+describe("undatedDays", () => {
+  const copied = (file: string) => ({
+    ...photo(file, "2026-10-19T04:21:00Z"),
+    takenAtIsMtime: true,
+  });
+  const timed = [
+    photo("20240618-142100_IMG_9681.MP4", "2024-06-18T14:21:00Z"),
+    photo("20240618-143000_IMG_9685.jpg", "2024-06-18T14:30:00Z"),
+    photo("20240620-145500_IMG_9992.jpg", "2024-06-20T14:55:00Z"),
+    photo("20240620-145600_IMG_0004.jpg", "2024-06-20T14:56:00Z"),
+    photo("20240620-152500_IMG_0079.jpg", "2024-06-20T15:25:00Z"),
+  ];
+
+  it("files by a neighbour ≤5 away, or by both neighbours' shared date", () => {
+    const files = ["IMG_9990.MOV", "IMG_9683.MOV", "IMG_0040.MOV"];
+    const candidates = files.map(copied);
+    const { moves, unsure } = undatedDays(
+      [...timed, ...candidates],
+      new Set(candidates),
+    );
+    expect(Object.fromEntries(moves)).toEqual({
+      "IMG_9990.MOV": "2024-06-20", // 2 below #9992, across days
+      "IMG_9683.MOV": "2024-06-18", // between #9681 and #9685
+      "IMG_0040.MOV": "2024-06-20", // between #0004 and #0079
+    });
+    expect(unsure.size).toBe(0);
+  });
+
+  it("leaves a far file between two dates, or one with no neighbour, unsure or alone", () => {
+    const candidates = ["IMG_9861.MOV", "IMG_0115.MOV", "IMG_5000.MOV"].map(
+      copied,
+    );
+    const { moves, unsure } = undatedDays(
+      [...timed, ...candidates],
+      new Set(candidates),
+    );
+    expect(moves.size).toBe(0);
+    expect(Object.fromEntries(unsure)).toEqual({
+      "IMG_9861.MOV": {
+        near: [
+          { day: "2024-06-18", n: 9685 },
+          { day: "2024-06-20", n: 9992 },
+        ],
+      },
+      "IMG_0115.MOV": { near: [{ day: "2024-06-20", n: 79 }] },
+    });
+  });
+
+  it("counts 9999 → 0001 as one step (no 0000)", () => {
+    const candidate = copied("IMG_9999.MOV");
+    const { moves } = undatedDays(
+      [
+        photo("IMG_9990.jpg", "2024-06-19T10:00:00Z"),
+        photo("IMG_0004.jpg", "2024-06-20T10:00:00Z"),
+        candidate,
+      ],
+      new Set([candidate]),
+    );
+    expect(moves.get("IMG_9999.MOV")).toBe("2024-06-20"); // 5 below #0004
+  });
+
+  it("files nothing where two cameras' numbers overlap", () => {
+    const shot = (file: string, t: string, camera: string) => ({
+      ...photo(file, t),
+      camera,
+    });
+    const candidate = copied("IMG_9650.MOV");
+    const media = [
+      shot("IMG_9600.jpg", "2024-06-18T10:00:00Z", "Apple iPhone 15"),
+      shot("IMG_9652.jpg", "2024-06-21T10:00:00Z", "Apple iPhone 13"),
+      candidate,
+    ];
+    const { moves, unsure } = undatedDays(media, new Set([candidate]));
+    expect(moves.size).toBe(0);
+    expect(unsure.get("IMG_9650.MOV")).toEqual({
+      near: [
+        { day: "2024-06-18", n: 9600 },
+        { day: "2024-06-21", n: 9652 },
+      ],
+      cameras: ["Apple iPhone 15", "Apple iPhone 13"],
+    });
+    // One camera (or untagged files) in range: filed as before.
+    media[0]!.camera = "Apple iPhone 13";
+    expect(
+      undatedDays(media, new Set([candidate])).moves.get("IMG_9650.MOV"),
+    ).toBe("2024-06-21");
+  });
+
+  it("only files the candidates", () => {
+    const moved = copied("IMG_9990.MOV");
+    expect(undatedDays([...timed, moved], new Set()).moves.size).toBe(0);
   });
 });
 

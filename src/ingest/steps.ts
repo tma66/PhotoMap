@@ -33,6 +33,11 @@ export interface TaggedMedia {
   /** True when `takenAt` is the file's mtime (no date in its metadata):
    * usually the copy time, so no real capture date to re-file it by. */
   takenAtIsMtime?: boolean;
+  /** True when a copy-date item's `takenAt` was moved next to its nearest
+   * IMG_#### neighbour's (see estimateUndatedTimes). */
+  takenAtIsEstimated?: boolean;
+  /** The camera's make and model, when recorded (see estimateUndatedTimes). */
+  camera?: string;
   /** The capture's UTC offset in minutes, when recorded (EXIF
    * OffsetTimeOriginal, or the QuickTime creationdate's suffix). */
   utcOffsetMin?: number;

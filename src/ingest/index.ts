@@ -17,17 +17,24 @@
 //        grouped by its own local calendar date (see src/ingest/timezone.ts).
 //        Real EXIF GPS photos get coord/locationName/weather auto-filled; a
 //        GPS-less photo with no coord takes the nearest-in-time coord on its
-//        date (none on a copy-date photo, or a day with no coords), else
+//        date (a copy-date photo only once given the nearest IMG_####'s time
+//        on its filed date — see estimateUndatedTimes; none on a day with no
+//        coords), else
 //        needs one typed in, after which locationName/weather auto-fill too
 //        (this and the site's --move-step are the only steps that fetch
 //        weather — see src/ingest/photo-overrides.ts). An entry filed under
 //        a date other than its file's recorded one (up to 7 days off; see
 //        misfiledMoves) moves to it, a hand-typed coord becoming the nearest
 //        unmoved item's (within 6 h), weather refetched; copy-date (mtime)
-//        files, and entries further off, stay where they're filed. Each
+//        files, and entries further off, stay where they're filed — except
+//        a copy-date file still on its copy date, filed by its nearest
+//        IMG_#### neighbours' date (see undatedDays; the rest, and any
+//        whose number range two cameras share, are printed with their
+//        neighbours, to move by hand). Each
 //        date's entries are sorted by time, and trip.json.<timestamp>.bak is
 //        kept when the file changes. Duplicate images are printed
-//        (see reportDuplicates); all copies stay on the site.
+//        (see reportDuplicates); all copies stay on the site, bar
+//        byte-identical ones (shown once).
 //     3. The trip is ingested into the DB.
 //     With no slug, trips whose folder is gone are dropped too. Stale source
 //     hashes are then cleared (see pruneSourceIndexes).
@@ -81,6 +88,8 @@ import {
   sortEntriesByTime,
   isSameCoord,
   nearestCoord,
+  estimateUndatedTimes,
+  undatedDays,
   misfiledMoves,
   type PhotoOverridesByDay,
   type PhotosBlock,
@@ -230,6 +239,7 @@ async function loadTaggedMedia(
   // (a plain ingest re-files it in trip.json too).
   const misfiled = misfiledMoves(media, utcDays, photoOverrides);
   applyFiledDates(media, photoOverrides, misfiled);
+  estimateUndatedTimes(media);
   media.sort((a, b) => a.takenAt.getTime() - b.takenAt.getTime());
   return media;
 }
@@ -301,9 +311,15 @@ function applyFiledDates(
   // kept, so photos on that day still sort among each other. Files in
   // `skip` keep their own date.
   const dates = filedDates(photoOverrides);
+  for (const file of skip.keys()) dates.delete(file);
+  setDays(media, dates);
+}
+
+/** Moves each item in `days` (file -> date) to that date, keeping its time
+ * of day. */
+function setDays(media: TaggedMedia[], days: ReadonlyMap<string, string>) {
   for (const m of media) {
-    if (skip.has(basename(m.sourcePath))) continue;
-    const day = dates.get(basename(m.sourcePath));
+    const day = days.get(basename(m.sourcePath));
     if (day && day !== m.takenAt.toISOString().slice(0, 10)) {
       m.takenAt = new Date(Date.parse(day) + (m.takenAt.getTime() % DAY_MS));
     }
@@ -677,27 +693,56 @@ async function writePhotoTemplate(slug: string): Promise<void> {
     const media = read[i]!;
     const utcDays = media.map((m) => m.takenAt.toISOString().slice(0, 10));
     localizeExactInstants(media);
+    const ownDays = media.map((m) => m.takenAt.toISOString().slice(0, 10));
     const own = tripBlock(overrides.photos, isMultiTrip, t.number);
     const moves = own
       ? misfiledMoves(media, utcDays, own)
       : new Map<string, string>();
     const was = filedDates(own);
-    if (own) {
-      moveEntries(own, moves);
-      // Its weather was the old date's. Blank, it's fetched below or, with
-      // weather off or a failed fetch, on a later run.
+    // A moved entry's weather was the old date's. Blank, it's fetched below
+    // or, with weather off or a failed fetch, on a later run.
+    const refile = (to: Map<string, string>) => {
+      if (!own) return;
+      moveEntries(own, to);
       for (const e of allEntries(own)) {
-        if (!moves.has(e.file)) continue;
+        if (!to.has(e.file)) continue;
         e.weatherTempF = null;
         e.weatherCode = null;
       }
-    }
+    };
+    refile(moves);
     for (const [file, day] of moves) {
       console.log(
         `[ingest] ${tripLabel(slug, t.number, isMultiTrip)} ${file}: moved ${was.get(file)} -> ${day} (its recorded date)`,
       );
     }
     applyFiledDates(media, own);
+    // A copy-date file still on its copy date (never moved, by hand or here)
+    // is filed by IMG_#### — see undatedDays.
+    const filed = filedDates(own);
+    const { moves: undatedMoves, unsure } = undatedDays(
+      media,
+      new Set(
+        media.filter(
+          (m, i) =>
+            m.takenAtIsMtime &&
+            (filed.get(basename(m.sourcePath)) ?? ownDays[i]) === ownDays[i],
+        ),
+      ),
+    );
+    refile(undatedMoves);
+    setDays(media, undatedMoves);
+    for (const [file, day] of undatedMoves) {
+      console.log(
+        `[ingest] ${tripLabel(slug, t.number, isMultiTrip)} ${file}: no date, filed under ${day} (nearest IMG number)`,
+      );
+    }
+    for (const [file, { near, cameras }] of unsure) {
+      console.log(
+        `[ingest] ${tripLabel(slug, t.number, isMultiTrip)} ${file}: no date, move it by hand — near ${near.map((x) => `IMG_${String(x.n).padStart(4, "0")} (${x.day})`).join(" and ")}${cameras ? `; cameras sharing these numbers: ${cameras.join(", ")}` : ""}`,
+      );
+    }
+    estimateUndatedTimes(media);
     // A moved entry's hand-typed coord was for its old date: take the
     // nearest unmoved item's (names and weather refresh below, as the coord
     // changed). The file's own GPS, or a blank coord over it, stays.
@@ -730,7 +775,12 @@ async function writePhotoTemplate(slug: string): Promise<void> {
       overrides.photos,
       tripBlock(overrides.photos, isMultiTrip, number),
     );
-    sortEntriesByTime(byDay, takenAtByFile(tripMedia));
+    sortEntriesByTime(
+      byDay,
+      takenAtByFile(
+        tripMedia.filter((m) => !m.takenAtIsMtime || m.takenAtIsEstimated),
+      ),
+    );
     return byDay;
   };
   const photos: PhotosBlock = isMultiTrip
@@ -744,13 +794,14 @@ async function writePhotoTemplate(slug: string): Promise<void> {
 
   // A coordless photo takes the coord of the nearest-in-time photo on its
   // date that has one (names and weather fill in below). Copy-date (mtime)
-  // photos have no real time, so they're left for a hand-typed coord; a
-  // blank coord over the file's own GPS stays, as for moved entries above.
+  // photos have no real time, so unless estimateUndatedTimes placed one
+  // they're left for a hand-typed coord; a blank coord over the file's own
+  // GPS stays, as for moved entries above.
   for (const t of mediaByTrip) {
     for (const e of allEntries(tripBlock(photos, isMultiTrip, t.number))) {
       if (e.coord != null) continue;
       const m = t.media.find((m) => basename(m.sourcePath) === e.file);
-      if (!m || m.takenAtIsMtime || m.gps) continue;
+      if (!m || (m.takenAtIsMtime && !m.takenAtIsEstimated) || m.gps) continue;
       const coord = nearestCoord(t.media, m, new Map(), true);
       if (!coord) continue;
       e.coord = coord;

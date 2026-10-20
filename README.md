@@ -88,9 +88,13 @@ For each trip, `npm run ingest`:
    Type a `coord` (`"lat,lng"`) for anything still blank, then re-run. An
    entry filed up to 7 days from the date its file records moves to that
    date (a hand-typed coord becomes that of the nearest photo within 6
-   hours; the file's own GPS stays). To fix a date that's wrong in the file
-   (no date, a copy date, a screen recording's), move the entry in
-   `trip.json`; ingest keeps it there. Entries stay in time order within
+   hours; the file's own GPS stays). A file with no recorded date is filed
+   under its nearest `IMG_####` neighbours' date (the nearest within 5
+   numbers, or the date shared by the ones either side) and slotted, and
+   given a coord, by number; the rest, and any whose numbers two cameras
+   (by make/model) both used, are printed to move by hand. To fix
+   a date that's wrong in the file (a copy date, a screen recording's),
+   move the entry in `trip.json`; ingest keeps it there. Entries stay in time order within
    each date, and a changed `trip.json` is backed up as
    `trip.json.<timestamp>.bak`. In a folder with trip subfolders, `photos`
    is grouped by subfolder number first
@@ -98,7 +102,8 @@ For each trip, `npm run ingest`:
 3. **Prints duplicate images** (exact copies, or the same picture resized,
    re-compressed or converted, whatever the filename) with their paths,
    largest copy first, so you can delete the ones you don't want; all copies
-   stay on the site until you do. Compared within each trip; videos aren't
+   stay on the site until you do, except byte-identical ones, shown once.
+   Compared within each trip; videos aren't
    compared.
 4. **Updates the site.** A trip with no geotagged photo at all is left off
    until you fill in a `coord`. With no slug, trips whose folder is gone
