@@ -88,14 +88,16 @@ For each trip, `npm run ingest`:
    Type a `coord` (`"lat,lng"`) for anything still blank, then re-run. An
    entry filed up to 7 days from the date its file records moves to that
    date (a hand-typed coord becomes that of the nearest photo within 6
-   hours; the file's own GPS stays). A file with no recorded date is filed
-   under its nearest `IMG_####` neighbours' date (the nearest within 5
-   numbers, or the date shared by the ones either side) and slotted, and
-   given a coord, by number; the rest, and any whose numbers two cameras
-   (by make/model) both used, are printed to move by hand. To fix
-   a date that's wrong in the file (a copy date, a screen recording's),
-   move the entry in `trip.json`; ingest keeps it there. Entries stay in time order within
-   each date, and a changed `trip.json` is backed up as
+   hours; the file's own GPS stays). A file with no recorded date that's
+   still on its copy date is filed under its nearest `IMG_####` neighbours'
+   date (the nearest within 5 numbers, or the date shared by the ones either
+   side); one you've moved by hand stays put. Either way it's slotted, and
+   given a coord, by number. Files with a timed neighbour but no clear date,
+   or whose numbers two cameras (by make/model) both used, are printed to
+   move by hand; the rest stay on their copy date, last, by name. To fix a
+   date that's wrong in the file (a copy date, a screen recording's), move
+   the entry in `trip.json`; ingest keeps it there. Entries stay in time
+   order within each date, and a changed `trip.json` is backed up as
    `trip.json.<timestamp>.bak`. In a folder with trip subfolders, `photos`
    is grouped by subfolder number first
    (`{ "1": { "2025-05-16": [...] }, "3": { ... } }`).
