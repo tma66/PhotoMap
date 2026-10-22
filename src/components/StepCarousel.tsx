@@ -86,6 +86,8 @@ const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
     // that ends the hold from also opening the story.
     const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const heldRef = useRef(false);
+    // Held so a pending fetch isn't dropped with an unreferenced Image.
+    const pressPreloadRef = useRef<HTMLImageElement | null>(null);
     const cancelHold = () => {
       if (holdTimer.current != null) clearTimeout(holdTimer.current);
       holdTimer.current = null;
@@ -221,6 +223,13 @@ const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
                 // Scrolling the carousel fires pointercancel, which drops
                 // the hold.
                 onPointerDown={() => {
+                  // Start fetching the story's first photo (a video's
+                  // poster) on press, ~100-200 ms before the tap opens it.
+                  if (cover) {
+                    const img = new Image();
+                    img.src = cover.displayUrl;
+                    pressPreloadRef.current = img;
+                  }
                   heldRef.current = false;
                   cancelHold();
                   if (!onEditLocation) return;
