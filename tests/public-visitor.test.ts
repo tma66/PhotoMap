@@ -58,5 +58,31 @@ describe("publicRoute", () => {
   it("leaves app shell files alone", () => {
     expect(publicRoute("/_next/static/chunk.js")).toEqual({ kind: "open" });
     expect(publicRoute("/manifest.webmanifest")).toEqual({ kind: "open" });
+    for (const p of [
+      "/public",
+      "/icon.png",
+      "/apple-icon.png",
+      "/icon-192.png",
+      "/pika-profile.png",
+      "/maplibre/maplibre-gl-worker.mjs",
+      "/pet/run.svg",
+    ]) {
+      expect(publicRoute(p)).toEqual({ kind: "open" });
+    }
+  });
+
+  it("refuses any other path, including odd spellings of trip paths", () => {
+    for (const p of [
+      "//m/Korea/1",
+      "/%6D/Korea/1",
+      "/%6d/Korea/1",
+      "/M/Korea/1",
+      "/robots.txt",
+      "/.well-known/security.txt",
+      "/unknown/page",
+      "/a/b.png",
+    ]) {
+      expect(publicRoute(p)).toEqual({ kind: "forbidden" });
+    }
   });
 });

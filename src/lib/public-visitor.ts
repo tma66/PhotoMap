@@ -8,9 +8,16 @@ export function isPublicHost(host: string | null | undefined): boolean {
   return name.endsWith(".ts.net");
 }
 
+// App shell paths a public visitor may load as is: Next's own files, the
+// /public page, and public/ folders (MapLibre worker, pet cartoons).
+const OPEN_SECTIONS = new Set(["_next", "public", "maplibre", "pet"]);
+// A single-segment file — icons, the manifest, the profile photo.
+const ROOT_FILE = /^\/[\w.-]+\.(png|svg|ico|webmanifest)$/;
+
 /** What a public visitor's request to `pathname` needs: refused outright,
  * the public-only home page, a check that the trip folder `slug` is public,
- * or nothing (app shell files: /_next, icons, manifest). */
+ * or nothing (app shell files). Anything not listed is refused, so an odd
+ * spelling of a trip path (`//m/…`, `/%6D/…`) can't skip the trip check. */
 export type PublicRoute =
   | { kind: "forbidden" }
   | { kind: "home" }
@@ -20,7 +27,6 @@ export type PublicRoute =
 export function publicRoute(pathname: string): PublicRoute {
   if (pathname === "/") return { kind: "home" };
   const [, section, slug] = pathname.split("/");
-  if (section === "api") return { kind: "forbidden" };
   if (section === "m" || section === "media") {
     try {
       return { kind: "trip", slug: decodeURIComponent(slug ?? "") };
@@ -28,5 +34,8 @@ export function publicRoute(pathname: string): PublicRoute {
       return { kind: "forbidden" };
     }
   }
-  return { kind: "open" };
+  if (OPEN_SECTIONS.has(section ?? "") || ROOT_FILE.test(pathname)) {
+    return { kind: "open" };
+  }
+  return { kind: "forbidden" };
 }
