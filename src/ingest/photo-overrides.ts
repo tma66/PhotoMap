@@ -18,6 +18,7 @@ interface PhotoOverride {
   cityName?: string | null; // decides route lines — see src/lib/route.ts
   weatherTempF?: number | null;
   weatherCode?: number | null;
+  cover?: boolean; // the trip's card image — see writeTrip in index.ts
 }
 
 /** Parses a PhotoOverride's "lat,lng" string; undefined if missing/malformed. */

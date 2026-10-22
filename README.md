@@ -137,14 +137,14 @@ Optional `assets/japan-2025/trip.json` fields, on top of the auto-filled
 ```json
 {
   "title": "Japan, spring 2025",
-  "cover": "IMG_1234.jpg",
   "public": true,
   "stepTitles": { "2": "Kyoto detour" }
 }
 ```
 
-- `cover`: filename of the photo used as the trip's card image (defaults to
-  the first step's first photo).
+- Card image: add `"cover": true` to a photo's entry in the `photos` block
+  (one per trip; several → the earliest, with a warning). Defaults to the
+  first step's first photo.
 - `public`: show every trip in this folder to visitors through the public
   link (see [Public link](#public-link)); trips are private by default.
 - `stepTitles`: override a step's auto-generated title, keyed by step

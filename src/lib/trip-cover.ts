@@ -1,8 +1,8 @@
 import { prisma } from "./db";
 
 /**
- * A trip's card image: its trip.json "cover" photo if set (any photo in the
- * trip — see src/ingest/index.ts), else its first step's first photo.
+ * A trip's card image: the photo flagged "cover": true in trip.json if any
+ * (see writeTrip in src/ingest/index.ts), else its first step's first photo.
  * Covers are looked up in one query for every trip passed in, rather than
  * folded into the caller's narrower per-step `take: 1` media query.
  */

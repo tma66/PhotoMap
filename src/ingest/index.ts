@@ -128,7 +128,6 @@ const tripLabel = (slug: string, number: number, isMultiTrip: boolean) =>
 interface TripOverrides {
   title?: string;
   description?: string;
-  cover?: string;
   /** Shown to public visitors (the Funnel link) — every trip in the folder. */
   public?: boolean;
   /** Keyed by step index — or, in a folder holding several trips, by trip
@@ -573,11 +572,23 @@ async function writeTrip(
     })),
   });
 
-  // trip.json "cover": a filename in the trip folder, e.g. "IMG_0042.HEIC".
-  // In a multi-trip folder it only matches inside the trip holding that file.
-  const cover = stored.find(
-    ({ job }) => basename(job.m.sourcePath) === overrides.cover,
+  // The trip's card image: the first photo whose trip.json "photos" entry has
+  // "cover": true. Only this trip's photos are in `stored`, so each trip of a
+  // multi-trip folder gets its own.
+  const flagged = new Set(
+    allEntries(overrides.photos)
+      .filter((e) => e.cover === true)
+      .map((e) => e.file),
   );
+  const covers = stored.filter(({ job }) =>
+    flagged.has(basename(job.m.sourcePath)),
+  );
+  if (covers.length > 1) {
+    console.warn(
+      `[ingest] ${slug}: ${covers.length} photos have "cover": true — using ${basename(covers[0]!.job.m.sourcePath)}`,
+    );
+  }
+  const cover = covers[0];
   if (cover) {
     const media = await tx.media.findFirst({
       where: { stepId: stepId(cover.job), order: cover.job.mediaIndex },
@@ -1281,7 +1292,6 @@ async function normalizeFileNames(slug: string): Promise<void> {
     for (const r of done) {
       const block = tripBlock(overrides.photos, isMultiTrip, r.number);
       for (const e of allEntries(block)) if (e.file === r.from) e.file = r.to;
-      if (overrides.cover === r.from) overrides.cover = r.to;
     }
     if (current != null) {
       await writeFile(tripJsonPath, JSON.stringify(overrides, null, 2) + "\n");
