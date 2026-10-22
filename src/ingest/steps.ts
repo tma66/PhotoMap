@@ -1,11 +1,17 @@
 // Groups a trip's timestamped, geotagged photos/videos into "steps" — one
 // step per calendar day (so a multi-day stay at one resort is still a
 // "Day 1"/"Day 2"/"Day 3" progression), plus an extra split whenever the
-// photos jump far enough within the same day (e.g. a same-day flight).
+// photos jump far enough within the same day (e.g. a same-day flight, or a
+// side trip after a break in shooting).
 import { haversineKm, type LatLng } from "../lib/geo";
 import { dayNumber } from "../lib/stats";
 
 const NEW_STEP_DISTANCE_KM = 25; // always a new step past this, regardless of timing
+// Past this, a new step only after a gap in shooting: a side trip, not a
+// walk. At step zoom (13) a phone shows ~3 km across, so the new pin is
+// off-screen either way.
+const NEARBY_STEP_DISTANCE_KM = 6;
+const NEARBY_STEP_GAP_MS = 60 * 60 * 1000;
 const FLIGHT_MIN_KM = 300;
 // Implied speed is measured photo-to-photo (last shot before departing to
 // first shot after arriving), which always includes some real but
@@ -80,9 +86,16 @@ export function groupIntoSteps(media: TaggedMedia[]): DraftStep[] {
     const point: LatLng = { lat: m.lat, lng: m.lng };
     const distFromLast = last ? haversineKm(last.centroid, point) : Infinity;
 
+    // Located items go in first, in time order, so the step's last item is
+    // the previous located photo.
+    const gapMs = last
+      ? m.takenAt.getTime() - last.media.at(-1)!.takenAt.getTime()
+      : Infinity;
+
     const shouldStartNew =
       !last ||
       distFromLast > NEW_STEP_DISTANCE_KM ||
+      (distFromLast > NEARBY_STEP_DISTANCE_KM && gapMs >= NEARBY_STEP_GAP_MS) ||
       !sameDay(last.arrivedAt, m.takenAt);
 
     if (shouldStartNew) {

@@ -45,7 +45,7 @@ describe("groupIntoSteps", () => {
   it("pins a multi-photo step to its first (preview) photo's coordinate, not an average", () => {
     const media = [
       photo(1.304991, 103.904967, "2025-06-10T09:00:00Z", "cover"),
-      photo(1.362389, 103.990124, "2025-06-10T14:00:00Z", "later"),
+      photo(1.362389, 103.990124, "2025-06-10T09:30:00Z", "later"), // ~12km, under an hour
     ];
     const steps = groupIntoSteps(media);
     expect(steps).toHaveLength(1);
@@ -79,6 +79,39 @@ describe("groupIntoSteps", () => {
     ];
     const steps = groupIntoSteps(media);
     expect(steps).toHaveLength(2);
+  });
+
+  it("splits a same-day side trip 6–25km away after an hour's gap", () => {
+    const media = [
+      photo(48.8584, 2.2945, "2025-06-10T09:00:00Z"), // Eiffel Tower
+      photo(48.8049, 2.1204, "2025-06-10T11:00:00Z"), // Versailles, ~14km, 2h later
+    ];
+    expect(groupIntoSteps(media)).toHaveLength(2);
+  });
+
+  it("keeps a same-day move 6–25km away in one step without an hour's gap", () => {
+    const media = [
+      photo(48.8584, 2.2945, "2025-06-10T09:00:00Z"),
+      photo(48.8049, 2.1204, "2025-06-10T09:50:00Z"), // ~14km, 50min later
+    ];
+    expect(groupIntoSteps(media)).toHaveLength(1);
+  });
+
+  it("keeps a same-day spot under 6km in one step, even after a gap", () => {
+    const media = [
+      photo(48.8584, 2.2945, "2025-06-10T09:00:00Z"), // Eiffel Tower
+      photo(48.8606, 2.3376, "2025-06-10T14:00:00Z"), // Louvre, ~3km, 5h later
+    ];
+    expect(groupIntoSteps(media)).toHaveLength(1);
+  });
+
+  it("measures the gap from the previous photo, not the step's first", () => {
+    const media = [
+      photo(48.8584, 2.2945, "2025-06-10T09:00:00Z"),
+      photo(48.8584, 2.2945, "2025-06-10T10:30:00Z"), // same spot
+      photo(48.8049, 2.1204, "2025-06-10T11:00:00Z"), // ~14km, 30min after the last
+    ];
+    expect(groupIntoSteps(media)).toHaveLength(1);
   });
 
   it("splits on a new day at a nearby-but-different place", () => {
