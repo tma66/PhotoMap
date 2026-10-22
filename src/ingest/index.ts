@@ -752,9 +752,13 @@ async function writePhotoTemplate(slug: string): Promise<void> {
     // A moved entry's hand-typed coord was for its old date: take the
     // nearest unmoved item's (names and weather refresh below, as the coord
     // changed). The file's own GPS, or a blank coord over it, stays.
+    // Reversed so a repeated name maps to its first item, as find() did.
+    const byFile = new Map(
+      [...media].reverse().map((m) => [basename(m.sourcePath), m]),
+    );
     for (const e of own ? allEntries(own) : []) {
       if (!moves.has(e.file)) continue;
-      const m = media.find((m) => basename(m.sourcePath) === e.file)!;
+      const m = byFile.get(e.file)!;
       if (m.gps && (!e.coord || isSameCoord(parseCoord(e.coord), m.gps))) {
         continue;
       }
@@ -804,9 +808,12 @@ async function writePhotoTemplate(slug: string): Promise<void> {
   // they're left for a hand-typed coord; a blank coord over the file's own
   // GPS stays, as for moved entries above.
   for (const t of mediaByTrip) {
+    const byFile = new Map(
+      [...t.media].reverse().map((m) => [basename(m.sourcePath), m]),
+    );
     for (const e of allEntries(tripBlock(photos, isMultiTrip, t.number))) {
       if (e.coord != null) continue;
-      const m = t.media.find((m) => basename(m.sourcePath) === e.file);
+      const m = byFile.get(e.file);
       if (!m || (m.takenAtIsMtime && !m.takenAtIsEstimated) || m.gps) continue;
       const coord = nearestCoord(t.media, m, new Map(), true);
       if (!coord) continue;
