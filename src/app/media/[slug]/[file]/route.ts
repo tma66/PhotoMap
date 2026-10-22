@@ -78,7 +78,7 @@ export async function GET(
   }
 
   const baseHeaders = {
-    "Content-Type": file.endsWith(".mp4") ? "video/mp4" : "image/jpeg",
+    "Content-Type": file.endsWith(".mp4") ? "video/mp4" : "image/avif",
     "Cache-Control": "public, max-age=31536000, immutable",
     "Accept-Ranges": "bytes",
   };

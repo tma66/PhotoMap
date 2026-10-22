@@ -144,7 +144,7 @@ export default async function TripPage({ params }: PageProps) {
         type: m.type as "IMAGE" | "VIDEO",
         thumbUrl: mediaUrl(slug, m.hash, "thumb"),
         displayUrl: mediaUrl(slug, m.hash, "display"),
-        videoUrl: m.type === "VIDEO" ? mediaUrl(slug, m.hash, "video") : null,
+        videoUrl: m.type === "VIDEO" ? mediaUrl(slug, m.hash, "hevc") : null,
         durationSec: m.durationSec,
         placeholder:
           i === 0 && stepIndex < INLINE_PLACEHOLDER_STEPS

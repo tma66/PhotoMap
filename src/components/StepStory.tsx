@@ -9,6 +9,8 @@ const PHOTO_DURATION_S = 5;
 // A press held longer than this is a pause (hold to look), not a tap — its
 // release resumes the current photo instead of advancing.
 const HOLD_MS = 250;
+/** How many items ahead to preload photos (~190 KB each). */
+const PHOTO_PRELOAD = 3;
 const MAX_ZOOM = 4;
 // Pinched back out to (nearly) this, it settles to the unzoomed photo.
 const UNZOOM_BELOW = 1.05;
@@ -134,6 +136,18 @@ export default function StepStory({
   const step = steps[stepIndex]!;
   const [mediaIndex, setMediaIndex] = useState(initialMediaIndex);
   const [paused, setPaused] = useState(false);
+  // The hash of the photo whose timer may run, once it has loaded. Over a
+  // slow link the 5s otherwise ran out while the photo was still black or
+  // blurred.
+  const [readyHash, setReadyHash] = useState<string | null>(null);
+  // A video that can't play (refused play(), e.g. iOS Low Power Mode, or a
+  // load error): its poster shows on a timer like a photo. Any other video's
+  // bar follows its playback position and the story advances on `ended`, so
+  // a frozen or buffering clip can't be cut short by a timer running on.
+  const [videoFallbackHash, setVideoFallbackHash] = useState<string | null>(
+    null,
+  );
+  const videoFillRef = useRef<HTMLDivElement>(null);
   const [journalExpanded, setJournalExpanded] = useState(false);
   // Persists across videos for the rest of this story session (like a
   // volume setting), rather than resetting to muted on every clip.
@@ -267,6 +281,10 @@ export default function StepStory({
   };
 
   const media = step.media[mediaIndex];
+  const videoDriven =
+    media?.type === "VIDEO" &&
+    !!media.videoUrl &&
+    videoFallbackHash !== media.hash;
 
   // Animates the story shrinking back down onto the card it closes to
   // (whichever step is currently on screen — see the getCardRect prop doc)
@@ -310,22 +328,31 @@ export default function StepStory({
     }
   };
 
-  // Preload the next photo/video so advancing to it (tap, swipe, or
-  // auto-advance) doesn't show a blank frame — or, for video, a poster held
-  // on screen while playback data is still being fetched — before it's
-  // ready.
+  // Preload the next video, and the photos among the next PHOTO_PRELOAD
+  // items, decoded, so
+  // advancing (tap, swipe, or auto-advance) doesn't show the blurred
+  // placeholder — or, for video, a poster held on screen while playback data
+  // is still being fetched — before it's ready. One photo ahead wasn't enough
+  // over the public link on cellular (~1s of blur per tap).
+  const preloadedRef = useRef<HTMLImageElement[]>([]);
   useEffect(() => {
     const next = step.media[mediaIndex + 1];
-    if (!next) return;
-    if (next.type === "VIDEO" && next.videoUrl) {
+    if (next?.type === "VIDEO" && next.videoUrl) {
       const video = document.createElement("video");
       video.preload = "auto";
       video.src = next.videoUrl;
       video.load();
-    } else {
-      const img = new Image();
-      img.src = next.displayUrl;
     }
+    // Held in a ref so a pending fetch isn't dropped with an unreferenced Image.
+    preloadedRef.current = step.media
+      .slice(mediaIndex + 1, mediaIndex + 1 + PHOTO_PRELOAD)
+      .filter((m) => m.type !== "VIDEO")
+      .map((m) => {
+        const img = new Image();
+        img.src = m.displayUrl;
+        img.decode().catch(() => {});
+        return img;
+      });
   }, [step, mediaIndex]);
 
   // Animates in from the tapped card's rect on the initial open — see
@@ -483,7 +510,8 @@ export default function StepStory({
       }}
     >
       {/* Progress bars — the active one fills via a CSS animation (paused/
-          resumed with animation-play-state) rather than a per-frame React
+          resumed with animation-play-state), or for a playing video via
+          VideoWithPoster writing its width, rather than a per-frame React
           state update, so a 5s photo doesn't re-render the story at 60fps. */}
       <div
         ref={progressBarRef}
@@ -494,7 +522,14 @@ export default function StepStory({
             key={i}
             className="flex-1 h-1 rounded-full bg-white/30 overflow-hidden"
           >
-            {i === mediaIndex ? (
+            {i === mediaIndex && videoDriven ? (
+              <div
+                key={media.hash}
+                ref={videoFillRef}
+                className="h-full bg-white"
+                style={{ width: "0%" }}
+              />
+            ) : i === mediaIndex ? (
               <div
                 className="h-full bg-white"
                 style={{
@@ -502,7 +537,8 @@ export default function StepStory({
                   animationDuration: `${media.durationSec ?? PHOTO_DURATION_S}s`,
                   animationTimingFunction: "linear",
                   animationFillMode: "forwards",
-                  animationPlayState: paused ? "paused" : "running",
+                  animationPlayState:
+                    paused || readyHash !== media.hash ? "paused" : "running",
                 }}
                 onAnimationEnd={() => {
                   // Guards a rare race: if the animation finishes in the
@@ -575,9 +611,22 @@ export default function StepStory({
               poster={media.displayUrl}
               muted={videoMuted}
               paused={paused}
+              onProgress={(fraction) => {
+                if (videoFillRef.current)
+                  videoFillRef.current.style.width = `${fraction * 100}%`;
+              }}
+              // Same drag-race guard as the bar's onAnimationEnd above.
+              onEnded={() => touchStart.current === null && goNext()}
+              onFallback={() => {
+                setVideoFallbackHash(media.hash);
+                setReadyHash(media.hash);
+              }}
             />
           ) : (
-            <StoryPhoto media={media} />
+            <StoryPhoto
+              media={media}
+              onReady={() => setReadyHash(media.hash)}
+            />
           )}
         </div>
       </div>
@@ -647,34 +696,72 @@ function VideoWithPoster({
   poster,
   muted,
   paused,
+  onProgress,
+  onEnded,
+  onFallback,
 }: {
   src: string;
   poster: string;
   muted: boolean;
   paused: boolean;
+  /** Playback position, 0–1, every frame once playing. */
+  onProgress: (fraction: number) => void;
+  onEnded: () => void;
+  /** Can't play (refused play() or a load error): the story shows the poster
+   * on a timer instead of waiting forever. */
+  onFallback: () => void;
 }) {
   const [playing, setPlaying] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-  // Holds still alongside the progress bar while the story is held.
+  const callbacksRef = useRef({ onProgress, onFallback });
+  useEffect(() => {
+    callbacksRef.current = { onProgress, onFallback };
+  });
+  // Holds still alongside the progress bar while the story is held. A refused
+  // play() (iOS Low Power Mode blocks autoplay) falls back to the poster on a
+  // timer; an AbortError only means a quick hold's pause() interrupted it.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     if (paused) video.pause();
-    else video.play().catch(() => {});
+    else
+      video.play().catch((e: DOMException) => {
+        if (e.name !== "AbortError") callbacksRef.current.onFallback();
+      });
   }, [paused]);
+  // Reads currentTime per frame rather than on `timeupdate` (~4/s in Safari,
+  // a visibly stepping bar). Stops moving whenever playback does — held,
+  // buffering, or frozen.
+  useEffect(() => {
+    if (!playing) return;
+    let id = 0;
+    const tick = () => {
+      const video = videoRef.current;
+      if (video?.duration)
+        callbacksRef.current.onProgress(video.currentTime / video.duration);
+      id = requestAnimationFrame(tick);
+    };
+    id = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(id);
+  }, [playing]);
   return (
     <div className="relative w-full h-full bg-black overflow-hidden">
       <video
         ref={videoRef}
-        src={src}
         poster={poster}
         preload="auto"
         autoPlay
         muted={muted}
         playsInline
         onPlaying={() => setPlaying(true)}
+        onEnded={onEnded}
+        onError={onFallback}
         className="absolute inset-0 w-full h-full object-contain bg-black"
-      />
+      >
+        {/* HEVC only. Plain type: a bare codecs="hvc1" can make Chrome skip
+            HEVC it could play. Errors fire on <source>, not <video>. */}
+        <source src={src} type="video/mp4" onError={onFallback} />
+      </video>
       {/* A slight scale-up alongside the fade, like Live Photos coming to
           life in Apple's Photos app, rather than a flat dissolve. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -710,11 +797,27 @@ function StepCoverPreview({ step }: { step?: StepView }) {
   );
 }
 
-/** A full-screen photo over its blurred placeholder. */
-function StoryPhoto({ media }: { media: StepView["media"][number] }) {
+/** A full-screen photo over its blurred placeholder. `onReady`: loaded, or
+ * failed (so the story moves on instead of waiting forever). */
+function StoryPhoto({
+  media,
+  onReady,
+}: {
+  media: StepView["media"][number];
+  onReady?: () => void;
+}) {
+  const imgRef = useRef<HTMLImageElement>(null);
+  // Already in the browser cache: `load` can fire before React attaches
+  // the handler, so check on every new src too.
+  useEffect(() => {
+    if (imgRef.current?.complete) onReady?.();
+  }, [media.displayUrl, onReady]);
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
+      ref={imgRef}
+      onLoad={onReady}
+      onError={onReady}
       src={media.displayUrl}
       alt=""
       decoding="async"

@@ -127,7 +127,7 @@ group or split steps.
 To fix a whole step's location, press and hold its card on the trip page:
 it writes the new `coord`, place names and weather to
 every photo in that step and updates the site in a second or two. **Anyone
-who can open the site can do this.**
+on your home network can do this**; visitors through the public link can't.
 
 ### Other overrides
 
@@ -138,12 +138,15 @@ Optional `assets/japan-2025/trip.json` fields, on top of the auto-filled
 {
   "title": "Japan, spring 2025",
   "cover": "IMG_1234.jpg",
+  "public": true,
   "stepTitles": { "2": "Kyoto detour" }
 }
 ```
 
 - `cover`: filename of the photo used as the trip's card image (defaults to
   the first step's first photo).
+- `public`: show every trip in this folder to visitors through the public
+  link (see [Public link](#public-link)); trips are private by default.
 - `stepTitles`: override a step's auto-generated title, keyed by step
   position (`"0"` is the first step).
   In a folder holding several trips, nest it by trip number:
@@ -163,6 +166,8 @@ is additive.
 - **Remove a whole trip:** delete `assets/<slug>/` entirely; `--watch`, a
   plain ingest (no slug) drops it from the site (skipped if `assets/` has
   no folders at all, e.g. an unmounted drive).
+- Ingest (not `--watch`) also deletes the removed files' or trip's cached
+  media from `data/cache/`.
 - **Rename a trip:** `npm run rename <old> <new>`. Renaming the
   folder by hand works too, but re-encodes all its media into a new cache
   folder.
@@ -176,6 +181,15 @@ npm run build && npm start
 ```
 
 Visit `http://localhost:3000` to view it right away
+
+### Public link
+
+To share with someone outside your network, expose it with
+[Tailscale Funnel](https://tailscale.com/kb/1223/funnel):
+`tailscale funnel --bg 3000`. Requests to the `*.ts.net` name are treated
+as public visitors (`src/proxy.ts`): they see only trips marked
+`"public": true`, can't change anything, and pages are sent with
+`X-Robots-Tag: noindex`.
 
 ## Environment variables
 

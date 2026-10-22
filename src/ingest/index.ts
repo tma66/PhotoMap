@@ -36,8 +36,9 @@
 //        (see reportDuplicates); all copies stay on the site, bar
 //        byte-identical ones (shown once).
 //     3. The trip is ingested into the DB.
-//     With no slug, trips whose folder is gone are dropped too. Stale source
-//     hashes are then cleared (see pruneSourceIndexes).
+//     With no slug, trips whose folder is gone are dropped too. Then the
+//     cache is pruned: stale source hashes, derivatives of files since
+//     deleted or edited, and a gone trip's whole cache folder (pruneCaches).
 //   npm run watch   -- ingest only (no renames, no trip.json
 //     writes), then keep watching assets/ and re-ingest a changed trip
 //   npm run rebuild -- wipe the whole DB, then ingest only
@@ -56,11 +57,12 @@ import {
   mkdir,
   readdir,
   rename,
+  rm,
   stat,
   readFile,
   writeFile,
 } from "node:fs/promises";
-import { basename, join, extname, relative } from "node:path";
+import { basename, join, extname, relative, sep } from "node:path";
 import chokidar from "chokidar";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/db";
@@ -97,6 +99,7 @@ import {
 import {
   processImage,
   processVideo,
+  pruneDerivatives,
   pruneSourceIndex,
   readHead,
   renameSources,
@@ -126,6 +129,8 @@ interface TripOverrides {
   title?: string;
   description?: string;
   cover?: string;
+  /** Shown to public visitors (the Funnel link) — every trip in the folder. */
+  public?: boolean;
   /** Keyed by step index — or, in a folder holding several trips, by trip
    * number first: { "2": { "0": "Kyoto" } }. */
   stepTitles?: Record<string, string | Record<string, string>>;
@@ -537,6 +542,7 @@ async function writeTrip(
       endDate: p.endDate,
       distanceKm: p.distanceKm,
       countryCodes: JSON.stringify(p.countryCodes),
+      isPublic: overrides.public === true,
     },
   });
 
@@ -1064,19 +1070,54 @@ async function slugsToIngest(onlySlug?: string): Promise<string[]> {
   return slugs;
 }
 
-/** Drops hashes of files since renamed, edited or deleted from each cache
- * folder's sources.json (all of them, removed trips' included, with no
- * `onlySlug`); the derivatives themselves stay. */
-async function pruneSourceIndexes(onlySlug?: string): Promise<void> {
+/** For each cache folder (all of them with no `onlySlug`): a trip whose
+ * assets/ folder is gone loses its whole cache folder; otherwise hashes of
+ * files since renamed, edited or deleted leave sources.json and their
+ * derivatives are deleted. Not run by --watch. An empty assets/ (e.g. an
+ * unmounted drive) deletes nothing, as in slugsToIngest. A cache folder
+ * whose sources.json doesn't point into this ASSETS_DIR is never removed: a
+ * scratch ASSETS_DIR against the real cache would read every trip as gone. */
+async function pruneCaches(onlySlug?: string): Promise<void> {
+  const tripSlugs = await listTripSlugs();
+  if (tripSlugs.length === 0) return;
   const names = onlySlug
     ? [onlySlug]
     : (await readdir(CACHE_DIR, { withFileTypes: true }).catch(() => []))
         .filter((d) => d.isDirectory())
         .map((d) => d.name);
+  const mb = (bytes: number) => (bytes / 1e6).toFixed(1);
   for (const name of names) {
-    const pruned = await pruneSourceIndex(join(CACHE_DIR, name));
+    const cacheDir = join(CACHE_DIR, name);
+    if (!tripSlugs.includes(name)) {
+      const files = await readdir(cacheDir).catch(() => null);
+      if (!files) continue; // no cache either, e.g. a mistyped slug
+      const sources = await readFile(join(cacheDir, "sources.json"), "utf8")
+        .then((raw) => Object.keys(JSON.parse(raw) as object))
+        .catch(() => []);
+      const tripDir = join(ASSETS_DIR, name) + sep;
+      if (!sources.some((key) => key.startsWith(tripDir))) {
+        console.warn(
+          `[ingest] ${name}: no assets folder, but its cache isn't from ${ASSETS_DIR} — left in place`,
+        );
+        continue;
+      }
+      let bytes = 0;
+      for (const f of files) bytes += (await stat(join(cacheDir, f))).size;
+      await rm(cacheDir, { recursive: true, force: true });
+      console.log(
+        `[ingest] ${name}: folder gone, removed its cache (${files.length} files, ${mb(bytes)} MB)`,
+      );
+      continue;
+    }
+    const pruned = await pruneSourceIndex(cacheDir);
     if (pruned > 0) {
       console.log(`[ingest] ${name}: dropped ${pruned} stale source hash(es)`);
+    }
+    const { files, bytes } = await pruneDerivatives(cacheDir);
+    if (files > 0) {
+      console.log(
+        `[ingest] ${name}: removed ${files} unused cache file(s) (${mb(bytes)} MB)`,
+      );
     }
   }
 }
@@ -1124,7 +1165,7 @@ async function hashPhotos(
         m.sourcePath,
         cacheDir,
       );
-      const thumb = await readFile(join(cacheDir, `${hash}-thumb.jpg`));
+      const thumb = await readFile(join(cacheDir, `${hash}-thumb.avif`));
       return {
         file: basename(m.sourcePath),
         path: m.sourcePath,
@@ -1343,7 +1384,7 @@ async function main(): Promise<void> {
   // written (--watch would otherwise rename photos still being copied in).
   if (rebuild || watch) await ingestAll(onlySlug);
   else await updateTrips(onlySlug);
-  if (!watch) await pruneSourceIndexes(onlySlug);
+  if (!watch) await pruneCaches(onlySlug);
   await refreshSite();
 
   if (watch) {

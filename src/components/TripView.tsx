@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import type { MapStep, MapStyleMode } from "./TripMap";
@@ -9,6 +16,7 @@ import StepCarousel, { type StepCarouselHandle } from "./StepCarousel";
 import TripScrubber, { type TripScrubberHandle } from "./TripScrubber";
 import StepStory from "./StepStory";
 import type { TripView as TripViewData } from "@/lib/trip-view";
+import { isPublicHost } from "@/lib/public-visitor";
 
 // maplibre-gl is a large library — loading it after the initial paint lets
 // the header/carousel become interactive first instead of waiting on it.
@@ -16,6 +24,16 @@ const TripMap = dynamic(() => import("./TripMap"), { ssr: false });
 const LocationPicker = dynamic(() => import("./LocationPicker"), {
   ssr: false,
 });
+
+// The page is built once for every visitor, so whether this one is public
+// is only known in the browser. The server refuses their edits anyway.
+const noSubscribe = () => () => {};
+const useIsPublicVisitor = () =>
+  useSyncExternalStore(
+    noSubscribe,
+    () => isPublicHost(window.location.host),
+    () => false,
+  );
 
 export default function TripView({ trip }: { trip: TripViewData }) {
   const [activeIndex, setActiveIndex] = useState(0);
@@ -29,6 +47,7 @@ export default function TripView({ trip }: { trip: TripViewData }) {
   const carouselRef = useRef<StepCarouselHandle>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const router = useRouter();
+  const isPublicVisitor = useIsPublicVisitor();
 
   // Stable reference across the 60fps re-renders `onScrollProgress` below
   // drives — otherwise TripMap sees a "new" `steps` array every
@@ -151,10 +170,14 @@ export default function TripView({ trip }: { trip: TripViewData }) {
           isScrubbing={isScrubbing}
           onActiveChange={setActiveIndex}
           onScrollProgress={handleScrollProgress}
-          onEditLocation={(i) => {
-            setActiveIndex(i);
-            setEditingIndex(i);
-          }}
+          onEditLocation={
+            isPublicVisitor
+              ? undefined
+              : (i) => {
+                  setActiveIndex(i);
+                  setEditingIndex(i);
+                }
+          }
           onOpenStep={(i) => {
             const step = trip.steps[i];
             setStoryOriginRect(

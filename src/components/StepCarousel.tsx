@@ -48,7 +48,8 @@ interface StepCarouselProps {
   onActiveChange: (index: number) => void;
   onScrollProgress: (progress: number) => void;
   onOpenStep: (index: number) => void;
-  onEditLocation: (index: number) => void;
+  /** Left out for public visitors, who can't move a step. */
+  onEditLocation?: (index: number) => void;
 }
 
 const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
@@ -222,6 +223,7 @@ const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
                 onPointerDown={() => {
                   heldRef.current = false;
                   cancelHold();
+                  if (!onEditLocation) return;
                   holdTimer.current = setTimeout(() => {
                     heldRef.current = true;
                     onEditLocation(i);
@@ -278,13 +280,15 @@ const StepCarousel = forwardRef<StepCarouselHandle, StepCarouselProps>(
                   so those get a hidden button. A sibling of the card's
                   button, not inside it (no nested buttons). Opens
                   LocationPicker — see TripView.tsx. */}
-              <button
-                type="button"
-                onClick={() => onEditLocation(i)}
-                className="sr-only"
-              >
-                Change location
-              </button>
+              {onEditLocation && (
+                <button
+                  type="button"
+                  onClick={() => onEditLocation(i)}
+                  className="sr-only"
+                >
+                  Change location
+                </button>
+              )}
             </div>
           );
         })}
