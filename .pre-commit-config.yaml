@@ -29,3 +29,10 @@ repos:
         entry: npx eslint .
         language: system
         pass_filenames: false
+      # The Funnel URL is the public link to the site: never in this public
+      # repo. Tests use the `tail1234` placeholder.
+      - id: no-tailnet-name
+        name: no real *.ts.net hostname
+        entry: '\.tail(?!1234\.)[0-9a-z]+\.ts\.net'
+        language: pygrep
+        args: [--ignore-case]
