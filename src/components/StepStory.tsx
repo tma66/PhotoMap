@@ -341,12 +341,14 @@ export default function StepStory({
   // Preload the photos among the next PHOTO_PRELOAD items, decoded, so
   // advancing (tap, swipe, or auto-advance) doesn't show the blurred
   // placeholder before it's ready. One photo ahead wasn't enough over the
-  // public link on cellular (~1s of blur per tap). The next video is
-  // preloaded by mounting it hidden (see nextVideo below).
+  // public link on cellular (~1s of blur per tap). Near a step's end the
+  // window runs on into the next step's items. The next video is preloaded
+  // by mounting it hidden (see nextVideo below) — within this step only.
   const preloadedRef = useRef<HTMLImageElement[]>([]);
+  const nextStepMedia = steps[stepIndex + 1]?.media;
   useEffect(() => {
     // Held in a ref so a pending fetch isn't dropped with an unreferenced Image.
-    preloadedRef.current = step.media
+    preloadedRef.current = [...step.media, ...(nextStepMedia ?? [])]
       .slice(mediaIndex + 1, mediaIndex + 1 + PHOTO_PRELOAD)
       .filter((m) => m.type !== "VIDEO")
       .map((m) => {
@@ -355,7 +357,7 @@ export default function StepStory({
         img.decode().catch(() => {});
         return img;
       });
-  }, [step, mediaIndex]);
+  }, [step, nextStepMedia, mediaIndex]);
 
   // Animates in from the tapped card's rect on the initial open — see
   // originRect's doc comment for why this only ever fires once, not on a
