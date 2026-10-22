@@ -281,6 +281,16 @@ export default function StepStory({
   };
 
   const media = step.media[mediaIndex];
+  // The next item, if it's a video, is mounted hidden and paused so it's
+  // buffered and decoder-ready when it becomes current: the same keyed
+  // <video> is then shown, not a fresh one. A detached preload <video> barely
+  // helped on iPhone (Safari dropped it after ~190 KB and refetched the clip
+  // when shown). Within this step only — the next step remounts StepStory.
+  const next = step.media[mediaIndex + 1];
+  const nextVideo =
+    next?.type === "VIDEO" && next.videoUrl && next.hash !== media?.hash
+      ? { hash: next.hash, src: next.videoUrl, poster: next.displayUrl }
+      : null;
   const videoDriven =
     media?.type === "VIDEO" &&
     !!media.videoUrl &&
@@ -328,21 +338,13 @@ export default function StepStory({
     }
   };
 
-  // Preload the next video, and the photos among the next PHOTO_PRELOAD
-  // items, decoded, so
+  // Preload the photos among the next PHOTO_PRELOAD items, decoded, so
   // advancing (tap, swipe, or auto-advance) doesn't show the blurred
-  // placeholder — or, for video, a poster held on screen while playback data
-  // is still being fetched — before it's ready. One photo ahead wasn't enough
-  // over the public link on cellular (~1s of blur per tap).
+  // placeholder before it's ready. One photo ahead wasn't enough over the
+  // public link on cellular (~1s of blur per tap). The next video is
+  // preloaded by mounting it hidden (see nextVideo below).
   const preloadedRef = useRef<HTMLImageElement[]>([]);
   useEffect(() => {
-    const next = step.media[mediaIndex + 1];
-    if (next?.type === "VIDEO" && next.videoUrl) {
-      const video = document.createElement("video");
-      video.preload = "auto";
-      video.src = next.videoUrl;
-      video.load();
-    }
     // Held in a ref so a pending fetch isn't dropped with an unreferenced Image.
     preloadedRef.current = step.media
       .slice(mediaIndex + 1, mediaIndex + 1 + PHOTO_PRELOAD)
@@ -601,12 +603,14 @@ export default function StepStory({
         className="absolute inset-0"
         style={{ transform: "translateX(0%)" }}
       >
-        <div ref={zoomLayerRef} className="w-full h-full">
+        <div ref={zoomLayerRef} className="relative w-full h-full">
           {media.type === "VIDEO" && media.videoUrl ? (
-            // key remounts on every media change so autoplay actually
-            // (re)triggers, and so the poster-fade state below resets per clip.
+            // key gives each clip its own element, so the poster-fade state
+            // below resets per clip, and the hidden next clip's element is
+            // the one shown once it becomes current.
             <VideoWithPoster
               key={media.hash}
+              active
               src={media.videoUrl}
               poster={media.displayUrl}
               muted={videoMuted}
@@ -626,6 +630,19 @@ export default function StepStory({
             <StoryPhoto
               media={media}
               onReady={() => setReadyHash(media.hash)}
+            />
+          )}
+          {nextVideo && (
+            <VideoWithPoster
+              key={nextVideo.hash}
+              active={false}
+              src={nextVideo.src}
+              poster={nextVideo.poster}
+              muted={videoMuted}
+              paused
+              onProgress={() => {}}
+              onEnded={() => {}}
+              onFallback={() => {}}
             />
           )}
         </div>
@@ -692,6 +709,7 @@ export default function StepStory({
 // once `onPlaying` fires, crossfading over whatever the video underneath is
 // showing at that moment instead of popping straight to it.
 function VideoWithPoster({
+  active,
   src,
   poster,
   muted,
@@ -700,6 +718,8 @@ function VideoWithPoster({
   onEnded,
   onFallback,
 }: {
+  /** False: the hidden next clip — buffering, paused at the start. */
+  active: boolean;
   src: string;
   poster: string;
   muted: boolean;
@@ -713,6 +733,13 @@ function VideoWithPoster({
 }) {
   const [playing, setPlaying] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  // A load error while hidden, reported once shown: a failed <source> can
+  // leave play() pending rather than rejected.
+  const failedRef = useRef(false);
+  const fail = () => {
+    if (active) onFallback();
+    else failedRef.current = true;
+  };
   const callbacksRef = useRef({ onProgress, onFallback });
   useEffect(() => {
     callbacksRef.current = { onProgress, onFallback };
@@ -720,20 +747,26 @@ function VideoWithPoster({
   // Holds still alongside the progress bar while the story is held. A refused
   // play() (iOS Low Power Mode blocks autoplay) falls back to the poster on a
   // timer; an AbortError only means a quick hold's pause() interrupted it.
+  // Made inactive again (stepped back past it): rewound so it restarts when
+  // shown, as a fresh element would.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    if (paused) video.pause();
+    if (!active) {
+      video.pause();
+      video.currentTime = 0;
+    } else if (failedRef.current) callbacksRef.current.onFallback();
+    else if (paused) video.pause();
     else
       video.play().catch((e: DOMException) => {
         if (e.name !== "AbortError") callbacksRef.current.onFallback();
       });
-  }, [paused]);
+  }, [active, paused]);
   // Reads currentTime per frame rather than on `timeupdate` (~4/s in Safari,
   // a visibly stepping bar). Stops moving whenever playback does — held,
   // buffering, or frozen.
   useEffect(() => {
-    if (!playing) return;
+    if (!playing || !active) return;
     let id = 0;
     const tick = () => {
       const video = videoRef.current;
@@ -743,24 +776,26 @@ function VideoWithPoster({
     };
     id = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(id);
-  }, [playing]);
+  }, [playing, active]);
   return (
-    <div className="relative w-full h-full bg-black overflow-hidden">
+    <div
+      className={`absolute inset-0 bg-black overflow-hidden ${active ? "" : "opacity-0 pointer-events-none"}`}
+    >
       <video
         ref={videoRef}
         poster={poster}
         preload="auto"
-        autoPlay
+        autoPlay={active}
         muted={muted}
         playsInline
         onPlaying={() => setPlaying(true)}
-        onEnded={onEnded}
-        onError={onFallback}
+        onEnded={() => active && onEnded()}
+        onError={fail}
         className="absolute inset-0 w-full h-full object-contain bg-black"
       >
         {/* HEVC only. Plain type: a bare codecs="hvc1" can make Chrome skip
             HEVC it could play. Errors fire on <source>, not <video>. */}
-        <source src={src} type="video/mp4" onError={onFallback} />
+        <source src={src} type="video/mp4" onError={fail} />
       </video>
       {/* A slight scale-up alongside the fade, like Live Photos coming to
           life in Apple's Photos app, rather than a flat dissolve. */}
