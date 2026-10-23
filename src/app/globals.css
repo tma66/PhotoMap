@@ -102,25 +102,31 @@ body {
 /* Map pins (see components/TripMap.tsx, GlobeMap.tsx) — .trip-pin itself
    isn't clipped (overflow visible) so the active pin's place-name label can
    sit outside its circular bounds; .trip-pin-photo carries the clipping for
-   the photo/fallback instead. */
+   the photo/fallback instead. .trip-pin is also the MapLibre marker, whose
+   inline `transform` (its position) would override a scale there, and whose
+   own CSS sets its transition (opacity 0.2s): the look, ring and active
+   scale live on .trip-pin-photo. */
 .trip-pin {
   width: 44px;
   height: 44px;
-  border-radius: 9999px;
-  border: 3px solid #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   position: relative;
   cursor: pointer;
-  transition:
-    box-shadow 0.2s,
-    transform 0.2s;
-  background: var(--color-ps-navy);
+}
+/* Behind the globe: hidden (TripMap's opacityWhenCovered), so not tappable. */
+.trip-pin.maplibregl-marker-covered {
+  pointer-events: none;
 }
 .trip-pin-photo {
   width: 100%;
   height: 100%;
   border-radius: 9999px;
   overflow: hidden;
+  border: 3px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  background: var(--color-ps-navy);
+  transition:
+    box-shadow 0.2s,
+    transform 0.2s;
 }
 .trip-pin-photo img {
   width: 100%;
@@ -133,11 +139,13 @@ body {
   background: var(--color-ps-navy);
 }
 .trip-pin-active {
+  z-index: 10;
+}
+.trip-pin-active .trip-pin-photo {
   box-shadow:
     0 0 0 4px rgba(0, 153, 229, 0.55),
     0 1px 6px rgba(0, 0, 0, 0.5);
   transform: scale(1.12);
-  z-index: 10;
 }
 .trip-pin-label {
   position: absolute;
@@ -247,6 +255,8 @@ body {
 .trip-pin.heaven-pin {
   width: 88px;
   height: 88px;
+}
+.heaven-pin .trip-pin-photo {
   border-width: 4px;
   transform: none;
   box-shadow:

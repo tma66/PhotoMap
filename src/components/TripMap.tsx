@@ -24,7 +24,12 @@ import {
   streetsDetailSource,
   STREETS_HAVE_LABELS,
 } from "@/lib/map-style";
-import { landingTiles, tileUrl } from "@/lib/tile-prefetch";
+import {
+  landingTiles,
+  tilesAcross,
+  tileUrl,
+  type TileXYZ,
+} from "@/lib/tile-prefetch";
 
 export interface MapStep extends RouteStep {
   locationName: string;
@@ -387,24 +392,42 @@ function prefetchLowResTiles(styleMode: MapStyleMode): void {
 // Warms the browser cache with the tiles a landing on `to` needs, so the
 // flight there finds them ready instead of sharpening late: the raster at
 // map zooms 9–13 (256px tiles, one zoom higher: 10–14) and the names (512px
-// tiles: 8–12), plus streets' detail layer. The 2×2 nearest the step at
-// each zoom: about 40 tiles (48 on streets), each fetched once per page load.
+// tiles: 8–12), plus streets' detail layer. The last zooms of the descent
+// cover the whole `width`×`height` screen (a phone needs 3×5 raster tiles);
+// higher up, where the camera passes quickly, the 2×2 nearest the step.
+// About 60 tiles (80 on streets), each fetched once per page load; the map
+// would fetch the same on landing anyway.
 const prefetchedTiles = new Set<string>();
-function prefetchLanding(styleMode: MapStyleMode, to: LatLng): void {
+function prefetchLanding(
+  styleMode: MapStyleMode,
+  to: LatLng,
+  width: number,
+  height: number,
+): void {
   const raster = RASTER_SOURCES[styleMode]().tiles?.[0];
   const names =
     styleMode === "streets" && !STREETS_NAMES ? undefined : NAMES?.tiles?.[0];
+  const detail =
+    styleMode === "streets" ? STREETS_DETAIL?.tiles?.[0] : undefined;
+  // Tiles are drawn 256–512px wide (raster) or 512–1024px (names).
+  const rasterScreen = [tilesAcross(width, 256), tilesAcross(height, 256)];
+  const namesScreen = [tilesAcross(width, 512), tilesAcross(height, 512)];
+  const tiles = (template: string | undefined, sets: TileXYZ[][]) =>
+    template ? sets.flat().map((t) => tileUrl(template, t)) : [];
   const urls = [
-    ...(raster ? landingTiles(to, 10, 14).map((t) => tileUrl(raster, t)) : []),
-    ...(names
-      ? landingTiles(to, PLACE_NAMES_ZOOM, 12).map((t) => tileUrl(names, t))
-      : []),
-    // Map zooms 12–13 for the detail layer (~210 KB a tile).
-    ...(styleMode === "streets" && STREETS_DETAIL?.tiles?.[0]
-      ? landingTiles(to, 13, 14).map((t) =>
-          tileUrl(STREETS_DETAIL.tiles![0]!, t),
-        )
-      : []),
+    ...tiles(raster, [
+      landingTiles(to, 10, 12),
+      landingTiles(to, 13, 14, rasterScreen[0], rasterScreen[1]),
+    ]),
+    ...tiles(names, [
+      landingTiles(to, PLACE_NAMES_ZOOM, 11),
+      landingTiles(to, 12, 12, namesScreen[0], namesScreen[1]),
+    ]),
+    // Map zooms 12–13 (~210 KB a tile); at 12 it's still mostly faded out.
+    ...tiles(detail, [
+      landingTiles(to, 13, 13),
+      landingTiles(to, 14, 14, rasterScreen[0], rasterScreen[1]),
+    ]),
   ];
   for (const url of urls) {
     if (prefetchedTiles.has(url)) continue;
@@ -642,7 +665,13 @@ export default function TripMap({
 
         el.addEventListener("click", () => onSelectStep(step.id));
 
-        const marker = new maplibregl.Marker({ element: el, anchor: "center" })
+        // Hidden, not MapLibre's default 20%, behind the globe: faded pins
+        // there showed up in the space beside it mid-flight.
+        const marker = new maplibregl.Marker({
+          element: el,
+          anchor: "center",
+          opacityWhenCovered: 0,
+        })
           .setLngLat([step.lng, step.lat])
           .addTo(map);
         markers.set(step.id, marker);
@@ -665,6 +694,7 @@ export default function TripMap({
         petRef.current = new maplibregl.Marker({
           element: el,
           offset: [26, -22],
+          opacityWhenCovered: 0,
         })
           .setLngLat([start.lng, start.lat])
           .addTo(map);
@@ -706,7 +736,8 @@ export default function TripMap({
     // The visitor likely swipes on next: have its landing ready by then.
     const next = steps[steps.indexOf(step) + 1];
     if (next && !isHeaven(next) && !isScrubbing) {
-      prefetchLanding(styleModeRef.current, next);
+      const { clientWidth, clientHeight } = map.getContainer();
+      prefetchLanding(styleModeRef.current, next, clientWidth, clientHeight);
     }
     const pet = petRef.current;
     pet?.getElement().classList.toggle("walking-pet-hidden", isHeaven(step));

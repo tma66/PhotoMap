@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { landingTiles, tileUrl } from "@/lib/tile-prefetch";
+import { landingTiles, tilesAcross, tileUrl } from "@/lib/tile-prefetch";
 
 const SHIBUYA = { lat: 35.6595, lng: 139.7005 };
 
@@ -23,6 +23,18 @@ describe("landingTiles", () => {
     expect(Math.max(...ys) - Math.min(...ys)).toBe(1);
   });
 
+  it("returns a cols×rows block around the point", () => {
+    const z14 = landingTiles(SHIBUYA, 14, 14, 3, 5);
+    expect(z14).toHaveLength(15);
+    // Shibuya at z14 is 0.92 into column 14549 and 0.88 into row 6452.
+    expect(new Set(z14.map((t) => t.x))).toEqual(
+      new Set([14548, 14549, 14550]),
+    );
+    expect(new Set(z14.map((t) => t.y))).toEqual(
+      new Set([6450, 6451, 6452, 6453, 6454]),
+    );
+  });
+
   it("wraps columns across the antimeridian", () => {
     const xs = landingTiles({ lat: 0, lng: 179.99 }, 4, 4).map((t) => t.x);
     expect(new Set(xs)).toEqual(new Set([15, 0]));
@@ -32,6 +44,15 @@ describe("landingTiles", () => {
     const z1 = landingTiles({ lat: 84, lng: 0 }, 1, 1);
     expect(z1.every((t) => t.y >= 0 && t.y < 2)).toBe(true);
     expect(z1).toHaveLength(2);
+  });
+});
+
+describe("tilesAcross", () => {
+  it("covers the screen whatever the tile offset", () => {
+    expect(tilesAcross(390, 256)).toBe(3);
+    expect(tilesAcross(844, 256)).toBe(5);
+    expect(tilesAcross(390, 512)).toBe(2);
+    expect(tilesAcross(0, 256)).toBe(2);
   });
 });
 
