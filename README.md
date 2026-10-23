@@ -202,6 +202,22 @@ about up front:
   keyless Esri tiles (lower detail, no place search). **Changing this requires a rebuild** (`npm run build`),
   not just a restart, since Next.js inlines `NEXT_PUBLIC_*` vars into the
   client bundle at build time.
+- `NEXT_PUBLIC_MAPBOX_STREETS_STYLE`: optional, needs the token above. A
+  label-free copy of Mapbox's street style for the trip map: the map then
+  draws place and street names itself, only near the ground, instead of
+  labels baked into the tiles that blur and balloon mid-flight. Blank:
+  Mapbox's own Streets style, labels included. To make one (free):
+  1. In [Mapbox Studio](https://studio.mapbox.com), with the same account as
+     the token: **New style** → under the **Classic** templates pick
+     **Streets** → **Customize**. (Classic, because the map loads it as
+     image tiles through the Static Tiles API, which can't render Standard
+     or Faded.)
+  2. In the **Layers** panel, search `label` and hide every match (eye
+     icon); search `shield` and hide those too. Keep roads, water and parks.
+  3. **Publish**, then **Share** → copy the **Style URL**
+     (`mapbox://styles/<user>/<id>`).
+  4. Set `NEXT_PUBLIC_MAPBOX_STREETS_STYLE=<user>/<id>` (the full URL also
+     works) in `.env`, then `npm run build` and restart.
 - `INGEST_WEATHER=off`: skip fetching weather during ingest and
   step-location changes (fetched weather is kept in `trip.json`, so each
   photo's is fetched once).

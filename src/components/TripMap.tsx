@@ -22,6 +22,7 @@ import {
   satelliteSource,
   streetsBaseSource,
   streetsDetailSource,
+  STREETS_HAVE_LABELS,
 } from "@/lib/map-style";
 import { landingTiles, tileUrl } from "@/lib/tile-prefetch";
 
@@ -193,6 +194,8 @@ function walkPet(
 // small muted text, neighbourhoods in spaced caps — so names don't compete
 // with the photos and pins, and don't pile up over a city while climbing.
 const NAMES = namesSource();
+// Streets tiles from Mapbox's own style carry their labels (STREETS_HAVE_LABELS).
+const STREETS_NAMES = NAMES != null && !STREETS_HAVE_LABELS;
 const PLACE_NAMES_ZOOM = 8; // big cities; every town from 10
 const NEIGHBOURHOOD_NAMES_ZOOM = 11;
 const WATER_NAMES_ZOOM = 10;
@@ -324,7 +327,7 @@ const BASE_LAYERS: Record<MapStyleMode, string[]> = {
   ],
   streets: [
     ...RASTER_LAYERS.streets,
-    ...(NAMES ? nameLayers("streets").map((l) => l.id) : []),
+    ...(STREETS_NAMES ? nameLayers("streets").map((l) => l.id) : []),
   ],
 };
 // The streets tiles are toned down so the photos and pins stay the brightest
@@ -342,9 +345,10 @@ const ALL_RASTER_LAYERS = [
   ...(STREETS_DETAIL ? ["streets-detail"] : []),
   ...(NAMES ? [] : ["labels"]),
 ];
-const ALL_NAME_LAYERS = NAMES
-  ? [...nameLayers("satellite"), ...nameLayers("streets")]
-  : [];
+const ALL_NAME_LAYERS = [
+  ...(NAMES ? nameLayers("satellite") : []),
+  ...(STREETS_NAMES ? nameLayers("streets") : []),
+];
 const ALL_BASE_LAYERS = [
   ...ALL_RASTER_LAYERS,
   ...ALL_NAME_LAYERS.map((l) => l.id),
@@ -388,7 +392,8 @@ function prefetchLowResTiles(styleMode: MapStyleMode): void {
 const prefetchedTiles = new Set<string>();
 function prefetchLanding(styleMode: MapStyleMode, to: LatLng): void {
   const raster = RASTER_SOURCES[styleMode]().tiles?.[0];
-  const names = NAMES?.tiles?.[0];
+  const names =
+    styleMode === "streets" && !STREETS_NAMES ? undefined : NAMES?.tiles?.[0];
   const urls = [
     ...(raster ? landingTiles(to, 10, 14).map((t) => tileUrl(raster, t)) : []),
     ...(names
