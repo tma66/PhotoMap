@@ -17,9 +17,13 @@ import HeavenScene from "./HeavenScene";
 import {
   GLOBE_SKY,
   labelsSource,
+  NAMES_GLYPHS,
+  namesSource,
   satelliteSource,
-  streetsSource,
+  streetsBaseSource,
+  streetsDetailSource,
 } from "@/lib/map-style";
+import { landingTiles, tileUrl } from "@/lib/tile-prefetch";
 
 export interface MapStep extends RouteStep {
   locationName: string;
@@ -179,11 +183,149 @@ function walkPet(
   return stop;
 }
 
-// Raster layers shown per style, bottom to top. The satellite labels overlay
-// isn't needed on streets, whose tiles carry their own labels.
+// Place and street names, drawn live from vector data only near the ground:
+// labels baked into raster tiles balloon to twice their size at every zoom
+// level a flight passes through. Above PLACE_NAMES_ZOOM no name tiles are
+// even fetched, so a flight shows none mid-air. Without a Mapbox token
+// (NAMES null), Esri's labelled tiles and labels overlay stand in.
+//
+// Quiet, like the reference app: places by importance (big cities first),
+// small muted text, neighbourhoods in spaced caps — so names don't compete
+// with the photos and pins, and don't pile up over a city while climbing.
+const NAMES = namesSource();
+const PLACE_NAMES_ZOOM = 8; // big cities; every town from 10
+const NEIGHBOURHOOD_NAMES_ZOOM = 11;
+const WATER_NAMES_ZOOM = 10;
+const STREET_NAMES_ZOOM = 12; // STEP_ZOOM is just under 13
+const NAME_COLORS: Record<
+  MapStyleMode,
+  { place: string; minor: string; halo: string; haloWidth: number }
+> = {
+  satellite: {
+    place: "rgba(255, 255, 255, 0.95)",
+    minor: "rgba(255, 255, 255, 0.9)",
+    halo: "rgba(0, 0, 0, 0.7)",
+    haloWidth: 1.4,
+  },
+  streets: {
+    place: "#4a5866",
+    minor: "#6b7885",
+    halo: "rgba(255, 255, 255, 0.85)",
+    haloWidth: 1,
+  },
+};
+const NAME_FONT = ["DIN Pro Regular", "Arial Unicode MS Regular"];
+
+function nameLayers(
+  styleMode: MapStyleMode,
+): maplibregl.SymbolLayerSpecification[] {
+  const name: maplibregl.ExpressionSpecification = [
+    "coalesce",
+    ["get", "name_en"],
+    ["get", "name"],
+  ];
+  const colors = NAME_COLORS[styleMode];
+  const paint = (color: string) => ({
+    "text-color": color,
+    "text-halo-color": colors.halo,
+    "text-halo-width": colors.haloWidth,
+  });
+  return [
+    {
+      id: `street-names-${styleMode}`,
+      type: "symbol",
+      source: "names",
+      "source-layer": "road",
+      minzoom: STREET_NAMES_ZOOM,
+      filter: ["has", "name"],
+      layout: {
+        "symbol-placement": "line",
+        "text-field": name,
+        "text-size": 10.5,
+        "text-font": NAME_FONT,
+      },
+      paint: paint(colors.minor),
+    },
+    {
+      id: `water-names-${styleMode}`,
+      type: "symbol",
+      source: "names",
+      "source-layer": "natural_label",
+      minzoom: WATER_NAMES_ZOOM,
+      filter: [
+        "in",
+        ["get", "class"],
+        ["literal", ["ocean", "sea", "water", "reservoir"]],
+      ],
+      layout: {
+        "text-field": name,
+        "text-size": 11,
+        "text-font": ["DIN Pro Italic", "Arial Unicode MS Regular"],
+      },
+      paint: paint(colors.minor),
+    },
+    {
+      id: `neighbourhood-names-${styleMode}`,
+      type: "symbol",
+      source: "names",
+      "source-layer": "place_label",
+      minzoom: NEIGHBOURHOOD_NAMES_ZOOM,
+      filter: ["==", ["get", "class"], "settlement_subdivision"],
+      layout: {
+        "text-field": ["upcase", name],
+        "text-size": 10,
+        "text-letter-spacing": 0.15,
+        "text-font": NAME_FONT,
+      },
+      paint: paint(colors.minor),
+    },
+    {
+      // Mapbox's symbolrank: lower is more important.
+      id: `place-names-${styleMode}`,
+      type: "symbol",
+      source: "names",
+      "source-layer": "place_label",
+      minzoom: PLACE_NAMES_ZOOM,
+      filter: [
+        "all",
+        ["==", ["get", "class"], "settlement"],
+        ["<=", ["get", "symbolrank"], ["step", ["zoom"], 9, 10, 18]],
+      ],
+      layout: {
+        "text-field": name,
+        "text-size": ["interpolate", ["linear"], ["zoom"], 8, 11, 13, 14],
+        "text-font": NAME_FONT,
+      },
+      paint: paint(colors.place),
+    },
+  ];
+}
+
+// Raster layers shown per style, bottom to top.
+// Streets flies on light tiles; near the ground the detailed ones fade in
+// with the camera's descent (0% at DETAIL_ZOOM, 100% at STEP_ZOOM) rather
+// than over a fixed time, so the side streets emerge as it closes in. Below
+// DETAIL_ZOOM the layer is off and none of its tiles are fetched.
+const STREETS_DETAIL = streetsDetailSource();
+const DETAIL_ZOOM = 12;
+const RASTER_LAYERS: Record<MapStyleMode, string[]> = {
+  satellite: NAMES
+    ? ["satellite-low", "satellite"]
+    : ["satellite-low", "satellite", "labels"],
+  streets: STREETS_DETAIL
+    ? ["streets-low", "streets", "streets-detail"]
+    : ["streets-low", "streets"],
+};
+// Every layer shown per style: its rasters, then its names on top.
 const BASE_LAYERS: Record<MapStyleMode, string[]> = {
-  satellite: ["satellite-low", "satellite", "labels"],
-  streets: ["streets-low", "streets"],
+  satellite: [
+    ...RASTER_LAYERS.satellite,
+    ...(NAMES ? nameLayers("satellite").map((l) => l.id) : []),
+  ],
+  streets: [
+    ...RASTER_LAYERS.streets,
+    ...(NAMES ? nameLayers("streets").map((l) => l.id) : []),
+  ],
 };
 // The streets tiles are toned down so the photos and pins stay the brightest
 // things on the map, and the white header text keeps some contrast.
@@ -191,20 +333,29 @@ const STREETS_PAINT = {
   "raster-saturation": -0.45,
   "raster-brightness-max": 0.9,
 } as const;
-const ALL_BASE_LAYERS = [
+// Drawing order of all of them.
+const ALL_RASTER_LAYERS = [
   "satellite-low",
   "streets-low",
   "satellite",
   "streets",
-  "labels",
+  ...(STREETS_DETAIL ? ["streets-detail"] : []),
+  ...(NAMES ? [] : ["labels"]),
+];
+const ALL_NAME_LAYERS = NAMES
+  ? [...nameLayers("satellite"), ...nameLayers("streets")]
+  : [];
+const ALL_BASE_LAYERS = [
+  ...ALL_RASTER_LAYERS,
+  ...ALL_NAME_LAYERS.map((l) => l.id),
 ];
 
-const LOW_RES_SOURCES: Record<
+const RASTER_SOURCES: Record<
   MapStyleMode,
   () => maplibregl.RasterSourceSpecification
 > = {
   satellite: satelliteSource,
-  streets: streetsSource,
+  streets: streetsBaseSource,
 };
 
 // Warms the browser cache with every low-res underlay tile (21 in total for
@@ -213,7 +364,7 @@ const LOW_RES_SOURCES: Record<
 // Once per style per page load — later trip pages reuse the same tiles.
 const prefetchedStyles = new Set<MapStyleMode>();
 function prefetchLowResTiles(styleMode: MapStyleMode): void {
-  const template = LOW_RES_SOURCES[styleMode]().tiles?.[0];
+  const template = RASTER_SOURCES[styleMode]().tiles?.[0];
   if (!template || prefetchedStyles.has(styleMode)) return;
   prefetchedStyles.add(styleMode);
   for (let z = 0; z <= LOW_RES_MAX_ZOOM; z++) {
@@ -226,6 +377,34 @@ function prefetchLowResTiles(styleMode: MapStyleMode): void {
         fetch(url).catch(() => {});
       }
     }
+  }
+}
+
+// Warms the browser cache with the tiles a landing on `to` needs, so the
+// flight there finds them ready instead of sharpening late: the raster at
+// map zooms 9–13 (256px tiles, one zoom higher: 10–14) and the names (512px
+// tiles: 8–12), plus streets' detail layer. The 2×2 nearest the step at
+// each zoom: about 40 tiles (48 on streets), each fetched once per page load.
+const prefetchedTiles = new Set<string>();
+function prefetchLanding(styleMode: MapStyleMode, to: LatLng): void {
+  const raster = RASTER_SOURCES[styleMode]().tiles?.[0];
+  const names = NAMES?.tiles?.[0];
+  const urls = [
+    ...(raster ? landingTiles(to, 10, 14).map((t) => tileUrl(raster, t)) : []),
+    ...(names
+      ? landingTiles(to, PLACE_NAMES_ZOOM, 12).map((t) => tileUrl(names, t))
+      : []),
+    // Map zooms 12–13 for the detail layer (~210 KB a tile).
+    ...(styleMode === "streets" && STREETS_DETAIL?.tiles?.[0]
+      ? landingTiles(to, 13, 14).map((t) =>
+          tileUrl(STREETS_DETAIL.tiles![0]!, t),
+        )
+      : []),
+  ];
+  for (const url of urls) {
+    if (prefetchedTiles.has(url)) continue;
+    prefetchedTiles.add(url);
+    fetch(url).catch(() => {});
   }
 }
 
@@ -244,15 +423,17 @@ function buildMapStyle(styleMode: MapStyleMode): maplibregl.StyleSpecification {
     version: 8,
     projection: { type: "globe" },
     sky: GLOBE_SKY,
+    ...(NAMES ? { glyphs: NAMES_GLYPHS } : {}),
     sources: {
       satellite: satelliteSource(),
-      streets: streetsSource(),
-      labels: labelsSource(),
+      streets: streetsBaseSource(),
+      ...(NAMES ? { names: NAMES } : { labels: labelsSource() }),
       // Same imagery capped at zoom 2 (16 tiles for the whole world), drawn
       // underneath — mid-flight, any detailed tile that hasn't arrived yet
       // shows a blurry version of the same map instead of a dark hole.
       "satellite-low": { ...satelliteSource(), maxzoom: LOW_RES_MAX_ZOOM },
-      "streets-low": { ...streetsSource(), maxzoom: LOW_RES_MAX_ZOOM },
+      "streets-low": { ...streetsBaseSource(), maxzoom: LOW_RES_MAX_ZOOM },
+      ...(STREETS_DETAIL ? { "streets-detail": STREETS_DETAIL } : {}),
     },
     layers: [
       {
@@ -260,12 +441,28 @@ function buildMapStyle(styleMode: MapStyleMode): maplibregl.StyleSpecification {
         type: "background",
         paint: { "background-color": "#04101c" },
       },
-      ...ALL_BASE_LAYERS.map(
+      ...ALL_RASTER_LAYERS.map(
         (id): maplibregl.LayerSpecification => ({
           id,
           type: "raster",
           source: id,
-          paint: id.startsWith("streets") ? STREETS_PAINT : {},
+          ...(id === "streets-detail"
+            ? {
+                minzoom: DETAIL_ZOOM,
+                paint: {
+                  ...STREETS_PAINT,
+                  "raster-opacity": [
+                    "interpolate",
+                    ["linear"],
+                    ["zoom"],
+                    DETAIL_ZOOM,
+                    0,
+                    STEP_ZOOM,
+                    1,
+                  ],
+                },
+              }
+            : { paint: id.startsWith("streets") ? STREETS_PAINT : {} }),
           layout: {
             visibility: BASE_LAYERS[styleMode].includes(id)
               ? "visible"
@@ -273,6 +470,15 @@ function buildMapStyle(styleMode: MapStyleMode): maplibregl.StyleSpecification {
           },
         }),
       ),
+      ...ALL_NAME_LAYERS.map((layer) => ({
+        ...layer,
+        layout: {
+          ...layer.layout,
+          visibility: BASE_LAYERS[styleMode].includes(layer.id)
+            ? ("visible" as const)
+            : ("none" as const),
+        },
+      })),
     ],
   };
 }
@@ -298,6 +504,8 @@ export default function TripMap({
   // Read when the route layer is added on "load", which can come after the
   // visitor already toggled it.
   const showRouteRef = useRef(showRoute);
+  // Read by the flight effect, which doesn't rerun on a style toggle.
+  const styleModeRef = useRef(styleMode);
   // Where HeavenScene sits (the globe's top edge), and whether it's showing.
   const [placement, setPlacement] = useState<{
     top: number;
@@ -490,6 +698,11 @@ export default function TripMap({
     const map = mapRef.current;
     const step = steps.find((s) => s.id === activeStepId);
     if (!step || !map) return;
+    // The visitor likely swipes on next: have its landing ready by then.
+    const next = steps[steps.indexOf(step) + 1];
+    if (next && !isHeaven(next) && !isScrubbing) {
+      prefetchLanding(styleModeRef.current, next);
+    }
     const pet = petRef.current;
     pet?.getElement().classList.toggle("walking-pet-hidden", isHeaven(step));
     // Reduced motion: the camera (and the pet) cut straight to each step
@@ -631,6 +844,7 @@ export default function TripMap({
   // don't exist to set properties on yet — harmless to skip, since the
   // style was already built with the right layer visible for that case.
   useEffect(() => {
+    styleModeRef.current = styleMode;
     prefetchLowResTiles(styleMode);
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
