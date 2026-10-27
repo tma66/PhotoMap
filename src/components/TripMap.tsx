@@ -482,7 +482,7 @@ function prefetchLanding(
 // Satellite and streets are both always in the style; the toggle just flips
 // which raster layer is visible (see the styleMode effect below) instead of
 // swapping maplibregl.Map's style wholesale, which would also wipe and
-// require re-adding the route/pin layers added after "load".
+// require re-adding the route/pin layers added on "style.load".
 //
 // Globe projection (matching the reference app's trip map): at street zoom it
 // renders flat, but a flyTo between distant steps pulls back to a sphere in
@@ -614,7 +614,7 @@ export default function TripMap({
   const petRef = useRef<maplibregl.Marker | null>(null);
   // The city the pet is in (or heading to), to tell a drive from a walk.
   const petCityRef = useRef<string | null>(null);
-  // Read when the route layer is added on "load", which can come after the
+  // Read when the route layer is added on "style.load", which can come after the
   // visitor already toggled it.
   const showRouteRef = useRef(showRoute);
   // Read by the flight effect, which doesn't rerun on a style toggle.
@@ -677,7 +677,10 @@ export default function TripMap({
     const resizeObserver = new ResizeObserver(() => map.resize());
     resizeObserver.observe(containerRef.current);
 
-    map.on("load", () => {
+    // "style.load", not "load": "load" waits for every tile on screen, which
+    // held the pins back ~5 s on a cold visit (Chrome, 20 Mbps) while the
+    // map itself drew at ~0.7 s.
+    map.once("style.load", () => {
       const legs = buildRouteLegs(steps);
       const geojson = legsToGeoJSON(legs);
 
@@ -984,29 +987,37 @@ export default function TripMap({
     }
   }, [showRoute]);
 
-  // Flip the visible base layer. Guarded on isStyleLoaded() since this can
-  // fire before the map's initial style finishes loading, when the layers
-  // don't exist to set properties on yet — harmless to skip, since the
-  // style was already built with the right layer visible for that case.
+  // Flip the visible base layer. Before the style is parsed the layers don't
+  // exist yet, so a toggle that early waits for "style.load" (registered
+  // after the setup effect's, so the route exists by then). Was skipped
+  // until every tile had loaded (isStyleLoaded()): a tap in the first
+  // seconds changed the button but left the map on the old style.
   useEffect(() => {
     styleModeRef.current = styleMode;
     prefetchLowResTiles(styleMode);
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
-    for (const id of ALL_BASE_LAYERS) {
-      map.setLayoutProperty(
-        id,
-        "visibility",
-        BASE_LAYERS[styleMode].includes(id) ? "visible" : "none",
-      );
-    }
-    if (isPetTrip) {
-      if (map.hasImage("paw")) {
-        map.updateImage("paw", drawPaw(routeColorFor(styleMode)));
+    if (!map) return;
+    const apply = () => {
+      for (const id of ALL_BASE_LAYERS) {
+        map.setLayoutProperty(
+          id,
+          "visibility",
+          BASE_LAYERS[styleMode].includes(id) ? "visible" : "none",
+        );
       }
-    } else if (map.getLayer("route")) {
-      map.setPaintProperty("route", "line-color", routeColorFor(styleMode));
-    }
+      if (isPetTrip) {
+        if (map.hasImage("paw")) {
+          map.updateImage("paw", drawPaw(routeColorFor(styleMode)));
+        }
+      } else if (map.getLayer("route")) {
+        map.setPaintProperty("route", "line-color", routeColorFor(styleMode));
+      }
+    };
+    if (map.getLayer(ALL_BASE_LAYERS[0]!)) apply();
+    else map.once("style.load", apply);
+    return () => {
+      map.off("style.load", apply);
+    };
   }, [styleMode, isPetTrip]);
 
   return (
