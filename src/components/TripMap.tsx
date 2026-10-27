@@ -61,6 +61,8 @@ function routeColorFor(styleMode: MapStyleMode): string {
 }
 
 const LOW_RES_MAX_ZOOM = 2;
+const MID_RES_ZOOM = 3;
+const HIGH_RES_ZOOM = 7;
 const NO_PADDING = { top: 0, bottom: 0, left: 0, right: 0 };
 // Heaven in two steps each way: the camera rises to the globe, then
 // HeavenScene fades in; leaving, it fades out first, then the camera flies
@@ -318,11 +320,23 @@ const STREETS_DETAIL = streetsDetailSource();
 const DETAIL_ZOOM = 12;
 const RASTER_LAYERS: Record<MapStyleMode, string[]> = {
   satellite: NAMES
-    ? ["satellite-low", "satellite"]
-    : ["satellite-low", "satellite", "labels"],
+    ? ["satellite-low", "satellite-mid", "satellite-high", "satellite"]
+    : [
+        "satellite-low",
+        "satellite-mid",
+        "satellite-high",
+        "satellite",
+        "labels",
+      ],
   streets: STREETS_DETAIL
-    ? ["streets-low", "streets", "streets-detail"]
-    : ["streets-low", "streets"],
+    ? [
+        "streets-low",
+        "streets-mid",
+        "streets-high",
+        "streets",
+        "streets-detail",
+      ]
+    : ["streets-low", "streets-mid", "streets-high", "streets"],
 };
 // Every layer shown per style: its rasters, then its names on top.
 const BASE_LAYERS: Record<MapStyleMode, string[]> = {
@@ -345,6 +359,10 @@ const STREETS_PAINT = {
 const ALL_RASTER_LAYERS = [
   "satellite-low",
   "streets-low",
+  "satellite-mid",
+  "streets-mid",
+  "satellite-high",
+  "streets-high",
   "satellite",
   "streets",
   ...(STREETS_DETAIL ? ["streets-detail"] : []),
@@ -385,6 +403,31 @@ function prefetchLowResTiles(styleMode: MapStyleMode): void {
           .replace("{y}", String(y));
         fetch(url).catch(() => {});
       }
+    }
+  }
+}
+
+// Fades the live names out (or back in) through text-opacity, leaving
+// their visibility to the satellite/streets toggle.
+function setNamesShown(map: maplibregl.Map, shown: boolean): void {
+  for (const { id } of ALL_NAME_LAYERS) {
+    if (map.getLayer(id))
+      map.setPaintProperty(id, "text-opacity", shown ? 1 : 0);
+  }
+}
+
+// Fades the detailed base tiles out (or back in) over a second, leaving the
+// low-res underlay: climbing faster than tiles at each zoom can be drawn,
+// the map otherwise kept the departure's sharp tiles as a square amid the
+// blur.
+function setDetailShown(map: maplibregl.Map, shown: boolean): void {
+  for (const id of ["satellite", "streets"]) {
+    if (map.getLayer(id)) {
+      map.setPaintProperty(id, "raster-opacity-transition", {
+        duration: 1000,
+        delay: 0,
+      });
+      map.setPaintProperty(id, "raster-opacity", shown ? 1 : 0);
     }
   }
 }
@@ -461,6 +504,32 @@ function buildMapStyle(styleMode: MapStyleMode): maplibregl.StyleSpecification {
       // shows a blurry version of the same map instead of a dark hole.
       "satellite-low": { ...satelliteSource(), maxzoom: LOW_RES_MAX_ZOOM },
       "streets-low": { ...streetsBaseSource(), maxzoom: LOW_RES_MAX_ZOOM },
+      // Zoom 3 only (64 tiles for the world, fetched as needed) over it: a
+      // sharper globe while the detail is hidden on a long flight (see
+      // setDetailShown); a tile not loaded yet shows the zoom 2 one beneath.
+      "satellite-mid": {
+        ...satelliteSource(),
+        minzoom: MID_RES_ZOOM,
+        maxzoom: MID_RES_ZOOM,
+      },
+      "streets-mid": {
+        ...streetsBaseSource(),
+        minzoom: MID_RES_ZOOM,
+        maxzoom: MID_RES_ZOOM,
+      },
+      // Zoom 7 only, drawn between map zooms 5 and 8.5 (higher up it
+      // stretched into blocks): real roads and shores partway up the climb
+      // instead of blur. The same URLs the hidden detail layer loads anyway.
+      "satellite-high": {
+        ...satelliteSource(),
+        minzoom: HIGH_RES_ZOOM,
+        maxzoom: HIGH_RES_ZOOM,
+      },
+      "streets-high": {
+        ...streetsBaseSource(),
+        minzoom: HIGH_RES_ZOOM,
+        maxzoom: HIGH_RES_ZOOM,
+      },
       ...(STREETS_DETAIL ? { "streets-detail": STREETS_DETAIL } : {}),
     },
     layers: [
@@ -474,23 +543,39 @@ function buildMapStyle(styleMode: MapStyleMode): maplibregl.StyleSpecification {
           id,
           type: "raster",
           source: id,
-          ...(id === "streets-detail"
+          ...(id.endsWith("-high")
             ? {
-                minzoom: DETAIL_ZOOM,
-                paint: {
-                  ...STREETS_PAINT,
-                  "raster-opacity": [
-                    "interpolate",
-                    ["linear"],
-                    ["zoom"],
-                    DETAIL_ZOOM,
-                    0,
-                    STEP_ZOOM,
-                    1,
-                  ],
-                },
+                minzoom: 5,
+                maxzoom: 8.5,
+                paint: id.startsWith("streets") ? STREETS_PAINT : {},
               }
-            : { paint: id.startsWith("streets") ? STREETS_PAINT : {} }),
+            : id === "streets-detail"
+              ? {
+                  minzoom: DETAIL_ZOOM,
+                  paint: {
+                    ...STREETS_PAINT,
+                    "raster-opacity": [
+                      "interpolate",
+                      ["linear"],
+                      ["zoom"],
+                      DETAIL_ZOOM,
+                      0,
+                      STEP_ZOOM,
+                      1,
+                    ],
+                  },
+                }
+              : {
+                  paint: {
+                    ...(id.startsWith("streets") ? STREETS_PAINT : {}),
+                    // Already in the browser cache (prefetchLowResTiles): no
+                    // 0.3 s fade-in, during which the dark space colour showed
+                    // through half the globe mid-flight.
+                    ...(id.endsWith("-low")
+                      ? { "raster-fade-duration": 0 }
+                      : {}),
+                  },
+                }),
           layout: {
             visibility: BASE_LAYERS[styleMode].includes(id)
               ? "visible"
@@ -773,6 +858,16 @@ export default function TripMap({
     map.once("movestart", hideHeaven);
     let flightTimer: ReturnType<typeof setTimeout> | undefined;
     let stopWalk: (() => void) | undefined;
+    const showNames = () => setNamesShown(map, true);
+    // Detail back once the camera starts down (its zoom rising again).
+    let lowestZoom = Infinity;
+    const showDetailOnDescent = () => {
+      const zoom = map.getZoom();
+      lowestZoom = Math.min(lowestZoom, zoom);
+      if (zoom < lowestZoom + 0.05) return;
+      map.off("zoom", showDetailOnDescent);
+      setDetailShown(map, true);
+    };
 
     const drive = petCityRef.current !== step.cityName;
     petCityRef.current = step.cityName;
@@ -818,6 +913,16 @@ export default function TripMap({
         duration: far ? 5000 : 2500,
         padding: NO_PADDING,
       });
+      // Names fade out for the climb and back in on landing: leaving a
+      // city, its towns' names flashed up for a moment as the camera rose
+      // through their zooms. After flyTo, as an interrupted flight's
+      // "moveend" (fired by flyTo) shows them again.
+      if (far) {
+        setNamesShown(map, false);
+        map.once("moveend", showNames);
+        setDetailShown(map, false);
+        map.on("zoom", showDetailOnDescent);
+      }
       // After flyTo, not before: cutting short a flight still in the air
       // fires its "moveend" right away, which would end this walk at once.
       // The new flight's first move comes on the next frame.
@@ -827,6 +932,10 @@ export default function TripMap({
       clearTimeout(flightTimer);
       stopWalk?.();
       map.off("movestart", hideHeaven);
+      map.off("moveend", showNames);
+      showNames();
+      map.off("zoom", showDetailOnDescent);
+      setDetailShown(map, true);
     };
     // `hidden` is read, not a dependency: showing the map again shouldn't
     // re-fly to the step it's already on.
