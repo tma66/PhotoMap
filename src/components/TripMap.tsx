@@ -329,11 +329,14 @@ function nameLayers(
 
 // Raster layers shown per style, bottom to top.
 // Streets flies on light tiles; near the ground the detailed ones fade in
-// with the camera's descent (0% at DETAIL_ZOOM, 100% at STEP_ZOOM) rather
-// than over a fixed time, so the side streets emerge as it closes in. Below
-// DETAIL_ZOOM the layer is off and none of its tiles are fetched.
+// with the camera's descent (0% at DETAIL_ZOOM, 100% at DETAIL_FULL_ZOOM)
+// rather than over a fixed time, so the side streets emerge as it closes in.
+// Fully in by DETAIL_FULL_ZOOM (~1 s before a long flight lands), as sharp as
+// satellite by then: its tiles are loaded by then anyway. Below DETAIL_ZOOM
+// the layer is off and none of its tiles are fetched.
 const STREETS_DETAIL = streetsDetailSource();
 const DETAIL_ZOOM = 12;
+const DETAIL_FULL_ZOOM = 12.5;
 const RASTER_LAYERS: Record<MapStyleMode, string[]> = {
   satellite: [
     "satellite-low",
@@ -611,7 +614,7 @@ function buildMapStyle(styleMode: MapStyleMode): maplibregl.StyleSpecification {
                       ["zoom"],
                       DETAIL_ZOOM,
                       0,
-                      STEP_ZOOM,
+                      DETAIL_FULL_ZOOM,
                       1,
                     ],
                   },
@@ -670,6 +673,10 @@ export default function TripMap({
   const showRouteRef = useRef(showRoute);
   // Read by the flight effect, which doesn't rerun on a style toggle.
   const styleModeRef = useRef(styleMode);
+  // The active step's tile preloads, set by the flight effect and rerun in the
+  // new style on a toggle: otherwise a visitor who switches on a step flies
+  // to the next one with only the old style's tiles cached.
+  const prefetchNearbyRef = useRef<(() => void) | null>(null);
   // Where HeavenScene sits (the globe's top edge), and whether it's showing.
   const [placement, setPlacement] = useState<{
     top: number;
@@ -880,17 +887,21 @@ export default function TripMap({
     const { clientWidth, clientHeight } = map.getContainer();
     const far = (n: MapStep | undefined): n is MapStep =>
       !!n && !isHeaven(n) && haversineKm(step, n) > LONG_FLIGHT_KM;
-    if (!isScrubbing && !isHeaven(step)) {
-      if (far(steps[index - 1]) || far(next)) {
-        prefetchClimb(styleModeRef.current, step, clientWidth, clientHeight);
+    prefetchNearbyRef.current = () => {
+      const styleMode = styleModeRef.current;
+      if (!isScrubbing && !isHeaven(step)) {
+        if (far(steps[index - 1]) || far(next)) {
+          prefetchClimb(styleMode, step, clientWidth, clientHeight);
+        }
+        if (far(next)) {
+          prefetchClimb(styleMode, next, clientWidth, clientHeight);
+        }
       }
-      if (far(next)) {
-        prefetchClimb(styleModeRef.current, next, clientWidth, clientHeight);
+      if (next && !isHeaven(next) && !isScrubbing) {
+        prefetchLanding(styleMode, next, clientWidth, clientHeight);
       }
-    }
-    if (next && !isHeaven(next) && !isScrubbing) {
-      prefetchLanding(styleModeRef.current, next, clientWidth, clientHeight);
-    }
+    };
+    prefetchNearbyRef.current();
     const pet = petRef.current;
     pet?.getElement().classList.toggle("walking-pet-hidden", isHeaven(step));
     // Reduced motion: the camera (and the pet) cut straight to each step
@@ -1059,6 +1070,7 @@ export default function TripMap({
   useEffect(() => {
     styleModeRef.current = styleMode;
     prefetchLowResTiles(styleMode);
+    prefetchNearbyRef.current?.();
     const map = mapRef.current;
     if (!map) return;
     const apply = () => {
