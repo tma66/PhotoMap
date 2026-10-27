@@ -62,7 +62,23 @@ function routeColorFor(styleMode: MapStyleMode): string {
 
 const LOW_RES_MAX_ZOOM = 2;
 const MID_RES_ZOOM = 3;
-const HIGH_RES_ZOOM = 7;
+// Single-zoom layers under the detail, one per zoom 6–12, so a long flight's
+// climb shows real roads and shores while the detail is hidden
+// (setDetailShown). MapLibre draws none of a layer's tiles while the map is
+// more than one zoom below it (raster tiles are one zoom above the map's), so
+// each starts one zoom below its own and reaches one above, finer on top: a
+// tile not loaded yet shows the coarser one (≤4× stretched), not blur. Zoom
+// 12 reaches 13, so it's loaded at a step already. The URLs the hidden detail
+// layer loads at each zoom anyway.
+const CLIMB_BANDS = [6, 7, 8, 9, 10, 11, 12].map((zoom) => ({
+  zoom,
+  from: zoom - 1,
+  to: Math.min(zoom + 1, 13),
+}));
+const climbLayers = (styleMode: MapStyleMode) =>
+  CLIMB_BANDS.map(({ zoom }) => `${styleMode}-z${zoom}`);
+const climbBand = (id: string) =>
+  CLIMB_BANDS.find(({ zoom }) => id.endsWith(`-z${zoom}`));
 const NO_PADDING = { top: 0, bottom: 0, left: 0, right: 0 };
 // Heaven in two steps each way: the camera rises to the globe, then
 // HeavenScene fades in; leaving, it fades out first, then the camera flies
@@ -319,24 +335,20 @@ function nameLayers(
 const STREETS_DETAIL = streetsDetailSource();
 const DETAIL_ZOOM = 12;
 const RASTER_LAYERS: Record<MapStyleMode, string[]> = {
-  satellite: NAMES
-    ? ["satellite-low", "satellite-mid", "satellite-high", "satellite"]
-    : [
-        "satellite-low",
-        "satellite-mid",
-        "satellite-high",
-        "satellite",
-        "labels",
-      ],
-  streets: STREETS_DETAIL
-    ? [
-        "streets-low",
-        "streets-mid",
-        "streets-high",
-        "streets",
-        "streets-detail",
-      ]
-    : ["streets-low", "streets-mid", "streets-high", "streets"],
+  satellite: [
+    "satellite-low",
+    "satellite-mid",
+    ...climbLayers("satellite"),
+    "satellite",
+    ...(NAMES ? [] : ["labels"]),
+  ],
+  streets: [
+    "streets-low",
+    "streets-mid",
+    ...climbLayers("streets"),
+    "streets",
+    ...(STREETS_DETAIL ? ["streets-detail"] : []),
+  ],
 };
 // Every layer shown per style: its rasters, then its names on top.
 const BASE_LAYERS: Record<MapStyleMode, string[]> = {
@@ -361,8 +373,8 @@ const ALL_RASTER_LAYERS = [
   "streets-low",
   "satellite-mid",
   "streets-mid",
-  "satellite-high",
-  "streets-high",
+  ...climbLayers("satellite"),
+  ...climbLayers("streets"),
   "satellite",
   "streets",
   ...(STREETS_DETAIL ? ["streets-detail"] : []),
@@ -389,22 +401,17 @@ const RASTER_SOURCES: Record<
 // zooms 0–2) so the first long flight doesn't wait on them mid-air and show
 // dark holes. MapLibre requests the same URLs later and gets cache hits.
 // Once per style per page load — later trip pages reuse the same tiles.
-const prefetchedStyles = new Set<MapStyleMode>();
 function prefetchLowResTiles(styleMode: MapStyleMode): void {
   const template = RASTER_SOURCES[styleMode]().tiles?.[0];
-  if (!template || prefetchedStyles.has(styleMode)) return;
-  prefetchedStyles.add(styleMode);
+  if (!template) return;
+  const urls: string[] = [];
   for (let z = 0; z <= LOW_RES_MAX_ZOOM; z++) {
     for (let x = 0; x < 2 ** z; x++) {
-      for (let y = 0; y < 2 ** z; y++) {
-        const url = template
-          .replace("{z}", String(z))
-          .replace("{x}", String(x))
-          .replace("{y}", String(y));
-        fetch(url).catch(() => {});
-      }
+      for (let y = 0; y < 2 ** z; y++)
+        urls.push(tileUrl(template, { z, x, y }));
     }
   }
+  prefetch(urls);
 }
 
 // Fades the live names out (or back in) through text-opacity, leaving
@@ -416,18 +423,28 @@ function setNamesShown(map: maplibregl.Map, shown: boolean): void {
   }
 }
 
-// Fades the detailed base tiles out (or back in) over a second, leaving the
-// low-res underlay: climbing faster than tiles at each zoom can be drawn,
-// the map otherwise kept the departure's sharp tiles as a square amid the
-// blur.
+// Hides the detailed base tiles for a long flight's climb, leaving the
+// layers beneath (CLIMB_BANDS and the low-res underlay): climbing faster than
+// tiles at each zoom can be drawn, the map otherwise keeps the departure's
+// sharp tiles as a square amid the blur. They fade out with height, gone two
+// zooms up before that square forms, and back in over a second.
+const DETAIL_HIDDEN = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  STEP_ZOOM - 2,
+  0,
+  STEP_ZOOM,
+  1,
+] as maplibregl.ExpressionSpecification;
 function setDetailShown(map: maplibregl.Map, shown: boolean): void {
   for (const id of ["satellite", "streets"]) {
     if (map.getLayer(id)) {
       map.setPaintProperty(id, "raster-opacity-transition", {
-        duration: 1000,
+        duration: shown ? 1000 : 0,
         delay: 0,
       });
-      map.setPaintProperty(id, "raster-opacity", shown ? 1 : 0);
+      map.setPaintProperty(id, "raster-opacity", shown ? 1 : DETAIL_HIDDEN);
     }
   }
 }
@@ -472,6 +489,34 @@ function prefetchLanding(
       landingTiles(to, 14, 14, rasterScreen[0], rasterScreen[1]),
     ]),
   ];
+  prefetch(urls);
+}
+
+// Warms the cache with the climb layers' tiles (CLIMB_BANDS) around a step
+// with a long flight either way, the whole screen at each zoom (~105 tiles,
+// 3×5 per zoom on a phone; the ones the hidden detail layer fetches on that
+// flight anyway), so the climb layers draw whole screens taking off and the
+// descent's lower zooms are ready on landing.
+function prefetchClimb(
+  styleMode: MapStyleMode,
+  at: LatLng,
+  width: number,
+  height: number,
+): void {
+  const raster = RASTER_SOURCES[styleMode]().tiles?.[0];
+  if (!raster) return;
+  prefetch(
+    landingTiles(
+      at,
+      CLIMB_BANDS[0]!.zoom,
+      CLIMB_BANDS.at(-1)!.zoom,
+      tilesAcross(width, 256),
+      tilesAcross(height, 256),
+    ).map((t) => tileUrl(raster, t)),
+  );
+}
+
+function prefetch(urls: string[]): void {
   for (const url of urls) {
     if (prefetchedTiles.has(url)) continue;
     prefetchedTiles.add(url);
@@ -517,19 +562,18 @@ function buildMapStyle(styleMode: MapStyleMode): maplibregl.StyleSpecification {
         minzoom: MID_RES_ZOOM,
         maxzoom: MID_RES_ZOOM,
       },
-      // Zoom 7 only, drawn between map zooms 5 and 8.5 (higher up it
-      // stretched into blocks): real roads and shores partway up the climb
-      // instead of blur. The same URLs the hidden detail layer loads anyway.
-      "satellite-high": {
-        ...satelliteSource(),
-        minzoom: HIGH_RES_ZOOM,
-        maxzoom: HIGH_RES_ZOOM,
-      },
-      "streets-high": {
-        ...streetsBaseSource(),
-        minzoom: HIGH_RES_ZOOM,
-        maxzoom: HIGH_RES_ZOOM,
-      },
+      ...Object.fromEntries(
+        CLIMB_BANDS.flatMap(({ zoom }) => [
+          [
+            `satellite-z${zoom}`,
+            { ...satelliteSource(), minzoom: zoom, maxzoom: zoom },
+          ],
+          [
+            `streets-z${zoom}`,
+            { ...streetsBaseSource(), minzoom: zoom, maxzoom: zoom },
+          ],
+        ]),
+      ),
       ...(STREETS_DETAIL ? { "streets-detail": STREETS_DETAIL } : {}),
     },
     layers: [
@@ -538,16 +582,23 @@ function buildMapStyle(styleMode: MapStyleMode): maplibregl.StyleSpecification {
         type: "background",
         paint: { "background-color": "#04101c" },
       },
-      ...ALL_RASTER_LAYERS.map(
-        (id): maplibregl.LayerSpecification => ({
+      ...ALL_RASTER_LAYERS.map((id): maplibregl.LayerSpecification => {
+        const band = climbBand(id);
+        return {
           id,
           type: "raster",
           source: id,
-          ...(id.endsWith("-high")
+          ...(band
             ? {
-                minzoom: 5,
-                maxzoom: 8.5,
-                paint: id.startsWith("streets") ? STREETS_PAINT : {},
+                minzoom: band.from,
+                maxzoom: band.to,
+                paint: {
+                  ...(id.startsWith("streets") ? STREETS_PAINT : {}),
+                  // Each shows for a fraction of a second on the climb:
+                  // MapLibre's 0.3 s fade-in per new tile left it mostly
+                  // transparent, blur showing through.
+                  "raster-fade-duration": 0,
+                },
               }
             : id === "streets-detail"
               ? {
@@ -581,8 +632,8 @@ function buildMapStyle(styleMode: MapStyleMode): maplibregl.StyleSpecification {
               ? "visible"
               : "none",
           },
-        }),
-      ),
+        };
+      }),
       ...ALL_NAME_LAYERS.map((layer) => ({
         ...layer,
         layout: {
@@ -821,10 +872,23 @@ export default function TripMap({
     const map = mapRef.current;
     const step = steps.find((s) => s.id === activeStepId);
     if (!step || !map) return;
-    // The visitor likely swipes on next: have its landing ready by then.
-    const next = steps[steps.indexOf(step) + 1];
+    // The visitor likely swipes on next: have its landing ready by then,
+    // and the climb tiles at both ends of a long flight from here (either
+    // way, for this step).
+    const index = steps.indexOf(step);
+    const next = steps[index + 1];
+    const { clientWidth, clientHeight } = map.getContainer();
+    const far = (n: MapStep | undefined): n is MapStep =>
+      !!n && !isHeaven(n) && haversineKm(step, n) > LONG_FLIGHT_KM;
+    if (!isScrubbing && !isHeaven(step)) {
+      if (far(steps[index - 1]) || far(next)) {
+        prefetchClimb(styleModeRef.current, step, clientWidth, clientHeight);
+      }
+      if (far(next)) {
+        prefetchClimb(styleModeRef.current, next, clientWidth, clientHeight);
+      }
+    }
     if (next && !isHeaven(next) && !isScrubbing) {
-      const { clientWidth, clientHeight } = map.getContainer();
       prefetchLanding(styleModeRef.current, next, clientWidth, clientHeight);
     }
     const pet = petRef.current;
