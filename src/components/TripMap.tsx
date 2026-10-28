@@ -129,9 +129,16 @@ function heavenPlacement(map: maplibregl.Map): { top: number; width: number } {
 }
 const LONG_FLIGHT_KM = 300; // same cutoff ingest uses for a flight leg
 // A 5 s flight's take-off (up to the globe, 1.5 s) as is, its descent sped
-// up to land at 4 s (see src/lib/flight-easing.ts).
-const LONG_FLIGHT_MS = 4000;
-const LONG_FLIGHT_EASING = shortenedEase(5000, 1500, LONG_FLIGHT_MS);
+// up as if landing at 4 s; from 3.45 s (zoom ~12.5 on Seattle → Tokyo, tiles
+// loaded) a quicker finish lands at 3.75 s (see src/lib/flight-easing.ts).
+const LONG_FLIGHT_MS = 3750;
+const LONG_FLIGHT_EASING = shortenedEase({
+  fullMs: 5000,
+  keepMs: 1500,
+  warpMs: 4000,
+  finishMs: 3450,
+  durationMs: LONG_FLIGHT_MS,
+});
 // The camera's zoom at a step. MapLibre lays lines out per whole zoom
 // level and stretches them in between, so dashes (and paw prints) grow
 // while a flight zooms in and snap back to their shortest the moment it
@@ -336,7 +343,7 @@ function nameLayers(
 // Streets flies on light tiles; near the ground the detailed ones fade in
 // with the camera's descent (0% at DETAIL_ZOOM, 100% at DETAIL_FULL_ZOOM)
 // rather than over a fixed time, so the side streets emerge as it closes in.
-// Fully in by DETAIL_FULL_ZOOM (~0.55 s before a long flight lands), as sharp as
+// Fully in by DETAIL_FULL_ZOOM (~0.3 s before a long flight lands), as sharp as
 // satellite by then: its tiles are loaded by then anyway. Below DETAIL_ZOOM
 // the layer is off and none of its tiles are fetched.
 const STREETS_DETAIL = streetsDetailSource();
