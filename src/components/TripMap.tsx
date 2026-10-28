@@ -10,7 +10,7 @@ import {
   legsToGeoJSON,
   type RouteStep,
 } from "@/lib/route";
-import { trimmedEase } from "@/lib/flight-easing";
+import { shortenedEase } from "@/lib/flight-easing";
 import { haversineKm, type LatLng } from "@/lib/geo";
 import { isHeaven } from "@/lib/heaven";
 import { prefersReducedMotion } from "@/lib/reduced-motion";
@@ -128,10 +128,10 @@ function heavenPlacement(map: maplibregl.Map): { top: number; width: number } {
   return { top, width: Math.min(clientWidth * 0.92, radius * 2.3) };
 }
 const LONG_FLIGHT_KM = 300; // same cutoff ingest uses for a flight leg
-// As a 5 s flight until 3.6 s (zoom ~11.8), then landing at 4.3 s instead of
-// creeping on to 5 s (see src/lib/flight-easing.ts).
-const LONG_FLIGHT_MS = 4300;
-const LONG_FLIGHT_EASING = trimmedEase(5000, 3600, LONG_FLIGHT_MS);
+// A 5 s flight's take-off (up to the globe, 1.5 s) as is, its descent sped
+// up to land at 4 s (see src/lib/flight-easing.ts).
+const LONG_FLIGHT_MS = 4000;
+const LONG_FLIGHT_EASING = shortenedEase(5000, 1500, LONG_FLIGHT_MS);
 // The camera's zoom at a step. MapLibre lays lines out per whole zoom
 // level and stretches them in between, so dashes (and paw prints) grow
 // while a flight zooms in and snap back to their shortest the moment it
@@ -336,7 +336,7 @@ function nameLayers(
 // Streets flies on light tiles; near the ground the detailed ones fade in
 // with the camera's descent (0% at DETAIL_ZOOM, 100% at DETAIL_FULL_ZOOM)
 // rather than over a fixed time, so the side streets emerge as it closes in.
-// Fully in by DETAIL_FULL_ZOOM (~0.4 s before a long flight lands), as sharp as
+// Fully in by DETAIL_FULL_ZOOM (~0.55 s before a long flight lands), as sharp as
 // satellite by then: its tiles are loaded by then anyway. Below DETAIL_ZOOM
 // the layer is off and none of its tiles are fetched.
 const STREETS_DETAIL = streetsDetailSource();
@@ -987,8 +987,7 @@ export default function TripMap({
       );
     } else {
       // Longer for a flight-scale hop (e.g. between countries), so the
-      // pull-back over the globe doesn't race by: a 5 s flight minus its
-      // last stretch's creep (LONG_FLIGHT_EASING).
+      // pull-back over the globe doesn't race by (LONG_FLIGHT_EASING).
       const { lat, lng } = map.getCenter();
       const far = haversineKm({ lat, lng }, step) > LONG_FLIGHT_KM;
       map.flyTo({

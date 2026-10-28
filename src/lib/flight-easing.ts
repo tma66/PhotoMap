@@ -1,10 +1,10 @@
 // A long flight's progress over time (maplibregl's flyTo `easing`): CSS
-// "ease", MapLibre's default, as if over `fullMs`, until `keepMs`; then a
-// quicker finish to `durationMs`. Under the default the last ~1.4 s of a 5 s
-// flight only creeps from zoom ~11.8 to 13, its tiles already loaded; this
-// keeps the take-off, globe and most of the descent unchanged and trims that
-// creep. The finish (a cubic Hermite) starts at the ease's speed and ends at
-// rest, so there's no jolt at the switch or on landing.
+// "ease", MapLibre's default, as if over `fullMs`, played in real time until
+// `keepMs`, then faster and faster so it lands at `durationMs`. The take-off
+// looks the same as a `fullMs` flight; the descent follows the same path,
+// sooner, losing most of its slow creep to the last zoom (its tiles already
+// loaded). Time runs through a quadratic warp, at normal speed at `keepMs`,
+// so there's no jolt there, and the ease still ends at rest.
 
 // CSS cubic-bezier(x1, y1, x2, y2): y for a given x (time), by Newton steps.
 function cubicBezier(x1: number, y1: number, x2: number, y2: number) {
@@ -31,26 +31,18 @@ function cubicBezier(x1: number, y1: number, x2: number, y2: number) {
 
 export const ease = cubicBezier(0.25, 0.1, 0.25, 1);
 
-export function trimmedEase(
+export function shortenedEase(
   fullMs: number,
   keepMs: number,
   durationMs: number,
 ): (t: number) => number {
-  const x0 = keepMs / fullMs;
-  const p0 = ease(x0);
-  const h = 1e-4;
-  // Speed at the switch, in the finish's own 0–1 time.
-  const m0 =
-    ((ease(x0 + h) - ease(x0 - h)) / (2 * h)) *
-    ((durationMs - keepMs) / fullMs);
+  const rest = durationMs - keepMs;
+  // Warp ms → ms + a·ms² past keepMs, reaching fullMs at durationMs.
+  const a = (fullMs - keepMs - rest) / (rest * rest);
   return (t) => {
     const ms = t * durationMs;
     if (ms <= keepMs) return ease(ms / fullMs);
-    const u = Math.min(1, (ms - keepMs) / (durationMs - keepMs));
-    const u2 = u * u;
-    const u3 = u2 * u;
-    return (
-      (2 * u3 - 3 * u2 + 1) * p0 + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2)
-    );
+    const s = ms - keepMs;
+    return ease(Math.min(1, (keepMs + s + a * s * s) / fullMs));
   };
 }
