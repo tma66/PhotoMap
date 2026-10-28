@@ -10,6 +10,7 @@ import {
   legsToGeoJSON,
   type RouteStep,
 } from "@/lib/route";
+import { trimmedEase } from "@/lib/flight-easing";
 import { haversineKm, type LatLng } from "@/lib/geo";
 import { isHeaven } from "@/lib/heaven";
 import { prefersReducedMotion } from "@/lib/reduced-motion";
@@ -127,6 +128,10 @@ function heavenPlacement(map: maplibregl.Map): { top: number; width: number } {
   return { top, width: Math.min(clientWidth * 0.92, radius * 2.3) };
 }
 const LONG_FLIGHT_KM = 300; // same cutoff ingest uses for a flight leg
+// As a 5 s flight until 3.6 s (zoom ~11.8), then landing at 4.3 s instead of
+// creeping on to 5 s (see src/lib/flight-easing.ts).
+const LONG_FLIGHT_MS = 4300;
+const LONG_FLIGHT_EASING = trimmedEase(5000, 3600, LONG_FLIGHT_MS);
 // The camera's zoom at a step. MapLibre lays lines out per whole zoom
 // level and stretches them in between, so dashes (and paw prints) grow
 // while a flight zooms in and snap back to their shortest the moment it
@@ -331,7 +336,7 @@ function nameLayers(
 // Streets flies on light tiles; near the ground the detailed ones fade in
 // with the camera's descent (0% at DETAIL_ZOOM, 100% at DETAIL_FULL_ZOOM)
 // rather than over a fixed time, so the side streets emerge as it closes in.
-// Fully in by DETAIL_FULL_ZOOM (~1 s before a long flight lands), as sharp as
+// Fully in by DETAIL_FULL_ZOOM (~0.4 s before a long flight lands), as sharp as
 // satellite by then: its tiles are loaded by then anyway. Below DETAIL_ZOOM
 // the layer is off and none of its tiles are fetched.
 const STREETS_DETAIL = streetsDetailSource();
@@ -981,14 +986,17 @@ export default function TripMap({
         HEAVEN_GONE_MS,
       );
     } else {
-      // Twice as long for a flight-scale hop (e.g. between countries), so
-      // the pull-back over the globe doesn't race by.
+      // Longer for a flight-scale hop (e.g. between countries), so the
+      // pull-back over the globe doesn't race by: a 5 s flight minus its
+      // last stretch's creep (LONG_FLIGHT_EASING).
       const { lat, lng } = map.getCenter();
       const far = haversineKm({ lat, lng }, step) > LONG_FLIGHT_KM;
       map.flyTo({
         center: [step.lng, step.lat],
         zoom: STEP_ZOOM,
-        duration: far ? 5000 : 2500,
+        ...(far
+          ? { duration: LONG_FLIGHT_MS, easing: LONG_FLIGHT_EASING }
+          : { duration: 2500 }),
         padding: NO_PADDING,
       });
       // Names fade out for the climb and back in on landing: leaving a
